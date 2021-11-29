@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -56,7 +54,7 @@ impl RxRing {
                 packet_sn: 0,
                 mpsc_to_packet_handler,
             }
-            .thread();
+            .rx_ring_thread();
         });
 
         mpsc_from_rx_ring
@@ -74,7 +72,7 @@ impl RxRing {
     }
 
     /// Pick up packets from NIC device and enqueue them for packet_handler
-    fn thread(&mut self) {
+    fn rx_ring_thread(&mut self) {
         log!("Thread spawned: 'rx_ring - {}'", self.nic_name);
 
         loop {
@@ -86,6 +84,7 @@ impl RxRing {
                     }
 
                     let mut packet_rx = Packet::new(frame_rx, self.tracker());
+
                     packet_rx.parse();
 
                     log!(

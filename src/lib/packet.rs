@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -78,19 +76,23 @@ impl Packet {
     pub fn assemble(&mut self) {
         for protocol in self.protocols.iter() {
             match protocol {
-                ProtoKind::Ether(header) => header.assemble(&mut self.frame),
-                ProtoKind::Ip6(header) => header.assemble(&mut self.frame),
+                ProtoKind::Ether(header) => {
+                    header.assemble(&mut self.frame);
+                }
+                ProtoKind::Ip6(header) => {
+                    header.assemble(&mut self.frame);
+                }
                 ProtoKind::Icmp6(Icmp6Kind::EchoRequest(message)) => {
-                    message.assemble(&mut self.frame)
+                    message.assemble(&mut self.frame);
                 }
                 ProtoKind::Icmp6(Icmp6Kind::EchoReply(message)) => {
-                    message.assemble(&mut self.frame)
+                    message.assemble(&mut self.frame);
                 }
                 ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(message)) => {
-                    message.assemble(&mut self.frame)
+                    message.assemble(&mut self.frame);
                 }
                 ProtoKind::Icmp6(Icmp6Kind::NeighborAdvertisement(message)) => {
-                    message.assemble(&mut self.frame)
+                    message.assemble(&mut self.frame);
                 }
                 _ => {}
             }
@@ -100,18 +102,20 @@ impl Packet {
     /// Add protocol header to the protocol stack
     pub fn add_protocol(mut self, mut protocol: ProtoKind) -> Packet {
         match protocol {
-            ProtoKind::Ip6(ref header) => self.phdr = header.phdr(),
+            ProtoKind::Ip6(ref header) => {
+                self.phdr = header.phdr();
+            }
             ProtoKind::Icmp6(Icmp6Kind::EchoRequest(ref mut message)) => {
-                message.phdr(self.phdr.clone())
+                message.phdr(self.phdr.clone());
             }
             ProtoKind::Icmp6(Icmp6Kind::EchoReply(ref mut message)) => {
-                message.phdr(self.phdr.clone())
+                message.phdr(self.phdr.clone());
             }
             ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(ref mut message)) => {
-                message.phdr(self.phdr.clone())
+                message.phdr(self.phdr.clone());
             }
             ProtoKind::Icmp6(Icmp6Kind::NeighborAdvertisement(ref mut message)) => {
-                message.phdr(self.phdr.clone())
+                message.phdr(self.phdr.clone());
             }
             _ => {}
         }
@@ -119,12 +123,12 @@ impl Packet {
         self
     }
 
-    /// Getter for protocols iterator
+    /// Get the iterator for 'protocols' array
     pub fn protocols(&self) -> std::slice::Iter<ProtoKind> {
         self.protocols.iter()
     }
 
-    /// Getter for Ethernet header
+    /// Get the Ethernet header if present in the 'protocols' array
     pub fn ether(&self) -> Option<&ether::Ether> {
         for protocol in self.protocols.iter() {
             if let ProtoKind::Ether(header) = protocol {
@@ -134,7 +138,7 @@ impl Packet {
         None
     }
 
-    /// Getter for IPv6 header
+    /// Get the IPv6 header if present in the 'protocols' array
     pub fn ip6(&self) -> Option<&ip6::Ip6> {
         for protocol in self.protocols.iter() {
             if let ProtoKind::Ip6(header) = protocol {
@@ -144,17 +148,47 @@ impl Packet {
         None
     }
 
-    /// Getter for ICMPv6 message
-    pub fn icmp6(&self) -> Option<&Icmp6Kind> {
+    /// Get the ICMPv6 Neighbor Solicitation message if present in the 'protocols' array
+    pub fn icmp6_neighbor_solicitation(&self) -> Option<&icmp6_nd::NeighborSolicitation> {
         for protocol in self.protocols.iter() {
-            if let ProtoKind::Icmp6(icmp6_kind) = protocol {
-                return Some(icmp6_kind);
+            if let ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(message)) = protocol {
+                return Some(message);
             }
         }
         None
     }
 
-    /// Ethernet parser
+    /// Get the ICMPv6 Neighbor Advertisement message if present in the 'protocols' array
+    pub fn icmp6_neighbor_advertisement(&self) -> Option<&icmp6_nd::NeighborAdvertisement> {
+        for protocol in self.protocols.iter() {
+            if let ProtoKind::Icmp6(Icmp6Kind::NeighborAdvertisement(message)) = protocol {
+                return Some(message);
+            }
+        }
+        None
+    }
+
+    /// Get the ICMPv6 Echo Request message if present in the 'protocols' array
+    pub fn icmp6_echo_request(&self) -> Option<&icmp6::EchoRequest> {
+        for protocol in self.protocols.iter() {
+            if let ProtoKind::Icmp6(Icmp6Kind::EchoRequest(message)) = protocol {
+                return Some(message);
+            }
+        }
+        None
+    }
+
+    /// Get the ICMPv6 Echo Reply message if present in the 'protocols' array
+    pub fn icmp6_echo_reply(&self) -> Option<&icmp6::EchoReply> {
+        for protocol in self.protocols.iter() {
+            if let ProtoKind::Icmp6(Icmp6Kind::EchoReply(message)) = protocol {
+                return Some(message);
+            }
+        }
+        None
+    }
+
+    /// Parse Ethernet header
     fn parse_ether(&mut self) {
         let ether = ether::Ether::new().parse(&self.frame[self.data_offset..]);
         let ether_type = ether.get_type();
@@ -166,7 +200,7 @@ impl Packet {
         }
     }
 
-    /// IPv6 parser
+    /// Parse IPv6 header
     fn parse_ip6(&mut self) {
         let ip6 = ip6::Ip6::new().parse(&self.frame[self.data_offset..]);
         let ip6_next = ip6.get_next();
@@ -178,7 +212,7 @@ impl Packet {
         }
     }
 
-    /// ICMPv6 ND Neighbor Solicitation parser
+    /// Parse ICMPv6 message
     fn parse_icmp6(&mut self) {
         match self.frame[self.data_offset] {
             icmp6_nd::NEIGHBOR_SOLICITATION__TYPE => {

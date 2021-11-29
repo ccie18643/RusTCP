@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -54,14 +52,14 @@ impl TxRing {
                 nic_mtu,
                 mpsc_from_packet_handler,
             }
-            .thread();
+            .tx_ring_thread();
         });
 
         mpsc_to_tx_ring
     }
 
     /// TX ring thread, dequeues packets from packet_handler and sends them to NIC device
-    fn thread(&mut self) {
+    fn tx_ring_thread(&mut self) {
         log!("Thread spawned: 'tx_ring - {}'", self.nic_name);
 
         loop {

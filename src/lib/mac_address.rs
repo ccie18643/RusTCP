@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -31,7 +29,7 @@ use regex::Regex;
 use std::convert::TryInto;
 use std::fmt;
 
-/// Helper converting MAC address format from string to bytes
+/// Convert MAC address format from string to bytes
 fn mac_str_to_bytes(mac_str: &str) -> Result<[u8; 6], errors::ParseAddressError> {
     let re = Regex::new(
         "^([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):\
@@ -51,7 +49,7 @@ fn mac_str_to_bytes(mac_str: &str) -> Result<[u8; 6], errors::ParseAddressError>
     }
 }
 
-/// Helper converting MAC address format from bytes to string
+/// Convert MAC address format from bytes to string
 fn bytes_to_mac_str(bytes: &[u8; 6]) -> String {
     let mut mac_str = String::with_capacity(19);
     for byte in bytes {
@@ -68,28 +66,9 @@ pub struct MacAddress {
 }
 
 impl MacAddress {
-    /// Create all-zeros MAC address
-    pub fn new() -> Self {
-        MacAddress { bytes: [0u8; 6] }
-    }
-
-    /// Helper converting MAC address to array of bytes
+    /// Convert MAC address into array of bytes
     pub fn to_bytes(self) -> [u8; 6] {
         self.bytes
-    }
-}
-
-/// Convert MAC address into array of  bytes
-impl From<MacAddress> for [u8; 6] {
-    fn from(mac_address: MacAddress) -> Self {
-        mac_address.bytes
-    }
-}
-
-/// Convert MAC address into reference to array of bytes
-impl From<&MacAddress> for [u8; 6] {
-    fn from(mac_address: &MacAddress) -> Self {
-        mac_address.bytes
     }
 }
 
@@ -99,13 +78,6 @@ impl From<&[u8]> for MacAddress {
         MacAddress {
             bytes: bytes.try_into().expect("Bad MAC address length"),
         }
-    }
-}
-
-/// Convert array of bytes into MAC address
-impl From<[u8; 6]> for MacAddress {
-    fn from(bytes: [u8; 6]) -> Self {
-        MacAddress { bytes }
     }
 }
 
@@ -121,8 +93,10 @@ impl From<&str> for MacAddress {
 /// Convert IPv6 multicast address into MAC address
 impl From<Ip6Address> for MacAddress {
     fn from(ip6_address: Ip6Address) -> Self {
-        // Need to assert here to make sure ip6_address is a multicast address
-        let ip6_address_bytes: [u8; 16] = ip6_address.into();
+        //
+        // TODO: Need to assert here to make sure ip6_address is a multicast address
+        //
+        let ip6_address_bytes: [u8; 16] = ip6_address.to_bytes();
         MacAddress {
             bytes: [
                 0x33,

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -31,7 +29,7 @@ use regex::Regex;
 use std::convert::TryInto;
 use std::fmt;
 
-/// Helper converting IPv6 address format from string to bytes
+/// Convert IPv6 address format from string to bytes
 fn ip6_str_to_bytes(ip6_str: &str) -> Result<[u8; 16], errors::ParseAddressError> {
     let mut bytes = [0u8; 16];
 
@@ -72,7 +70,7 @@ fn ip6_str_to_bytes(ip6_str: &str) -> Result<[u8; 16], errors::ParseAddressError
     Ok(bytes)
 }
 
-/// Helper converting IPv6 address format from bytes to string
+/// Converting IPv6 address format from bytes to string
 fn bytes_to_ip6_str(bytes: &[u8; 16]) -> String {
     let mut ip6_str = String::with_capacity(40);
 
@@ -116,11 +114,6 @@ pub struct Ip6Address {
 }
 
 impl Ip6Address {
-    /// Create all-zeros IPv6 address
-    pub fn new() -> Ip6Address {
-        Ip6Address { bytes: [0u8; 16] }
-    }
-
     /// Helper converting IPv6 address to array of bytes
     pub fn to_bytes(self) -> [u8; 16] {
         self.bytes
@@ -151,33 +144,12 @@ impl Ip6Address {
     }
 }
 
-/// Convert IPv6 address into array of bytes
-impl From<Ip6Address> for [u8; 16] {
-    fn from(ip6_address: Ip6Address) -> Self {
-        ip6_address.bytes
-    }
-}
-
-/// Convert IPv6 address into reference to array of bytes
-impl From<&Ip6Address> for [u8; 16] {
-    fn from(ip6_address: &Ip6Address) -> Self {
-        ip6_address.bytes
-    }
-}
-
 /// Convert slice of bytes into IPv6 Address
 impl From<&[u8]> for Ip6Address {
     fn from(bytes: &[u8]) -> Self {
         Ip6Address {
             bytes: bytes.try_into().expect("Bad IPv6 address length"),
         }
-    }
-}
-
-/// Convert array of bytes into IPv6 address
-impl From<[u8; 16]> for Ip6Address {
-    fn from(bytes: [u8; 16]) -> Self {
-        Ip6Address { bytes }
     }
 }
 

@@ -105,7 +105,7 @@ impl NeighborSolicitation {
         for opt in &self.opts {
             opts_len += opt.len();
         }
-        NEIGHBOR_ADVERTISEMENT__HEADER_LEN + opts_len
+        NEIGHBOR_SOLICITATION__HEADER_LEN + opts_len
     }
 
     /// Parse message
@@ -313,6 +313,10 @@ impl fmt::Display for NeighborAdvertisement {
         write!(f, "{}", text)
     }
 }
+
+//
+// TODO: Not sure yet if using enum for ND options is right approach but it works for now
+//
 
 /// Parse ICMPv6 ND options and put them into the option vector
 pub fn parse_opts(bytes: &[u8]) -> Vec<NdOpt> {

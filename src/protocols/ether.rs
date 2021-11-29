@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -30,7 +28,6 @@ use byteorder::{ByteOrder, NetworkEndian};
 use std::fmt;
 
 pub const HEADER_LEN: usize = 14;
-pub const TYPE__IP4: u16 = 0x0800;
 pub const TYPE__IP6: u16 = 0x86DD;
 
 /// Ethernet header

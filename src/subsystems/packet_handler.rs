@@ -42,17 +42,6 @@ use std::sync::mpsc;
 use std::thread;
 // use std::time;
 
-/// Extract the data from enum
-macro_rules! cast_enum {
-    ($target: expr, $pat: path) => {{
-        if let $pat(data) = $target {
-            data
-        } else {
-            panic!("Wrong enum variant casted to {}", stringify!($pat));
-        }
-    }};
-}
-
 pub struct PacketDropError;
 
 /// Packet handler structure
@@ -237,9 +226,13 @@ impl<'a> PacketHandler {
                         }
                     }
                     ProtoKind::Icmp6(_) => {
-                        log!("{} Unsupported ICMPv6 message", packet_rx.tracker)
+                        log!("{} Unsupported ICMPv6 message", packet_rx.tracker);
+                        break;
                     }
-                    _ => log!("{} Unsupported protocol", packet_rx.tracker),
+                    _ => {
+                        log!("{} Unsupported protocol", packet_rx.tracker);
+                        break;
+                    }
                 }
             }
         }
@@ -286,7 +279,7 @@ impl<'a> PacketHandler {
     ) -> Result<(), PacketDropError> {
         let ether_rx = packet_rx.ether().unwrap();
         let ip6_rx = packet_rx.ip6().unwrap();
-        let icmp6_rx = cast_enum!(packet_rx.icmp6().unwrap(), Icmp6Kind::NeighborSolicitation);
+        let icmp6_rx = packet_rx.icmp6_neighbor_solicitation().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
         log!(
             "{} - <B>Received ICMPv6 Neighbor Solicitation message from {}, sending reply</>",
@@ -338,7 +331,7 @@ impl<'a> PacketHandler {
     ) -> Result<(), PacketDropError> {
         let _ether_rx = packet_rx.ether().unwrap();
         let ip6_rx = packet_rx.ip6().unwrap();
-        let icmp6_rx = cast_enum!(packet_rx.icmp6().unwrap(), Icmp6Kind::NeighborSolicitation);
+        let icmp6_rx = packet_rx.icmp6_neighbor_advertisement().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
         log!(
             "{} - <B>Received ICMPv6 Neighbor Advertisement message from {}, not giving a single fuck about it</>",
@@ -353,7 +346,7 @@ impl<'a> PacketHandler {
     fn phrx_icmp6_echo_request(&mut self, packet_rx: &'a Packet) -> Result<(), PacketDropError> {
         let ether_rx = packet_rx.ether().unwrap();
         let ip6_rx = packet_rx.ip6().unwrap();
-        let icmp6_rx = cast_enum!(packet_rx.icmp6().unwrap(), Icmp6Kind::EchoRequest);
+        let icmp6_rx = packet_rx.icmp6_echo_request().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
         log!(
             "{} - <B>Received ICMPv6 Echo Request message from {}, sending reply</>",
@@ -401,7 +394,7 @@ impl<'a> PacketHandler {
     fn phrx_icmp6_echo_reply(&mut self, packet_rx: &'a Packet) -> Result<(), PacketDropError> {
         let _ether_rx = packet_rx.ether().unwrap();
         let ip6_rx = packet_rx.ip6().unwrap();
-        let icmp6_rx = cast_enum!(packet_rx.icmp6().unwrap(), Icmp6Kind::EchoRequest);
+        let icmp6_rx = packet_rx.icmp6_echo_reply().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
         log!(
             "{} - <B>Received ICMPv6 Echo Reply message from {}, not giving a single fuck about it</>",

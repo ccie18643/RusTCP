@@ -147,6 +147,7 @@ lazy_static! {
     ]);
 }
 
+/// Structure defining various log channels
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum LogChanel {
     Stack,
@@ -196,6 +197,7 @@ impl std::fmt::Display for LogChanel {
     }
 }
 
+/// Logger structure
 pub struct Logger<'a> {
     styles: HashMap<&'a str, &'a str>,
     start_time: SystemTime,
