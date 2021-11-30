@@ -119,6 +119,11 @@ impl Ip6Address {
         self.bytes
     }
 
+    /// Check if address is unspecified
+    pub fn is_unspecified(&self) -> bool {
+        self.bytes == [0u8; 16]
+    }
+
     /// Create coresponding Solicited Node Multicast address
     pub fn solicited_node_multicast(&self) -> Ip6Address {
         Ip6Address {

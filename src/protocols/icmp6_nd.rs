@@ -376,7 +376,7 @@ impl fmt::Display for NdOpt {
             NdOpt::SLLA(slla) => write!(f, ", slla {}", slla),
             NdOpt::TLLA(tlla) => write!(f, ", tlla {}", tlla),
             NdOpt::Unknown(r#type, len) => {
-                write!(f, ", unk_opt type {}, len {}", r#type, len)
+                write!(f, ", unk-{}-{}", r#type, len)
             }
         }
     }

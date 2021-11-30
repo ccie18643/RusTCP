@@ -39,8 +39,10 @@ use crate::subsystems::tx_ring;
 use filedescriptor::FileDescriptor;
 use std::collections::HashSet;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
-// use std::time;
+
+use std::time;
 
 pub struct PacketDropError;
 
@@ -48,7 +50,7 @@ pub struct PacketDropError;
 pub struct PacketHandler {
     nic_name: String,
     nic_mtu: usize,
-    packet_sn: usize,
+    packet_sn: Arc<Mutex<usize>>,
     mpsc_from_rx_ring: mpsc::Receiver<Packet>,
     mpsc_to_tx_ring: mpsc::Sender<Packet>,
     mac_address_rx: HashSet<MacAddress>,
@@ -85,16 +87,21 @@ impl<'a> PacketHandler {
 
         // Initialize the L2 and L3 addressing
         let mut mac_address_rx = HashSet::new();
-        let ip6_address_rx = HashSet::new();
+        let mut ip6_address_rx = HashSet::new();
 
-        mac_address_rx.insert("ff:ff:ff:ff:ff:ff".into());
         mac_address_rx.insert(mac_address);
+        mac_address_rx.insert("ff:ff:ff:ff:ff:ff".into());
 
-        // Create PacketHandler structure
+        mac_address_rx.insert("33:33:00:00:00:01".into());
+        ip6_address_rx.insert("ff02::1".into());
+
+        // Create PacketHandler structure, need to use mutex to make sure
+        // the 'packet_sn' read and increment is an atomic operation
+        #[allow(clippy::mutex_atomic)]
         PacketHandler {
             nic_name,
             nic_mtu,
-            packet_sn: 0,
+            packet_sn: Arc::new(Mutex::new(0)),
             mpsc_from_rx_ring,
             mpsc_to_tx_ring,
             mac_address_rx,
@@ -121,19 +128,27 @@ impl<'a> PacketHandler {
         self.mac_address_rx
             .insert(ip6_address.solicited_node_multicast().into());
 
-        /* Disabling this for now as the DAD mechanism is not complete
         // Send out three ICMPv6 ND DAD messages over three seconds
         {
             let mpsc_to_tx_ring = self.mpsc_to_tx_ring.clone();
-            let nic_name = self.nic_name.to_uppercase().clone();
+            let nic_name = self.nic_name.clone();
+            let packet_sn = self.packet_sn.clone();
+
             thread::spawn(move || {
                 log!("Thread spawned: 'icmp6_nd_dad - {}'", ip6_address);
+
                 for _ in 0..3 {
                     log!("<B>Sending ICMPv6 ND DAD packet for {}</>", ip6_address);
-                    let tracker = format!("<lr>[TX/{}/....]</>", nic_name);
 
-                    let icmp6_tx = icmp6_nd::NeighborSolicitation::new()
-                        .set_tnla(ip6_address.solicited_node_multicast());
+                    let tracker = {
+                        let mut packet_sn = packet_sn.lock().unwrap();
+                        let tracker =
+                            format!("<lr>[TX/{}/{:04X}]</>", nic_name.to_uppercase(), *packet_sn);
+                        *packet_sn = (*packet_sn).wrapping_add(1);
+                        tracker
+                    };
+
+                    let icmp6_tx = icmp6_nd::NeighborSolicitation::new().set_tnla(ip6_address);
                     log!("{} - {}", tracker, icmp6_tx);
 
                     let ip6_tx = ip6::Ip6::new()
@@ -163,18 +178,19 @@ impl<'a> PacketHandler {
                 log!("Thread ended: 'icmp6_nd_dad - {}'", ip6_address);
             });
         }
-        */
+
         self
     }
 
     /// Create tracker string to be used as packet identifier
     fn tracker(&mut self) -> String {
+        let mut packet_sn = self.packet_sn.lock().unwrap();
         let tracker = format!(
             "<lr>[TX/{}/{:04X}]</>",
             self.nic_name.to_uppercase(),
-            self.packet_sn
+            *packet_sn
         );
-        self.packet_sn = self.packet_sn.wrapping_add(1);
+        *packet_sn = (*packet_sn).wrapping_add(1);
         tracker
     }
 
@@ -211,7 +227,7 @@ impl<'a> PacketHandler {
                         }
                     }
                     ProtoKind::Icmp6(Icmp6Kind::NeighborAdvertisement(_)) => {
-                        if self.phrx_icmp6_neighbor_solicitation(&packet_rx).is_err() {
+                        if self.phrx_icmp6_neighbor_advertisement(&packet_rx).is_err() {
                             break;
                         }
                     }
@@ -281,6 +297,13 @@ impl<'a> PacketHandler {
         let ip6_rx = packet_rx.ip6().unwrap();
         let icmp6_rx = packet_rx.icmp6_neighbor_solicitation().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
+
+        // Determine if packet is part of DAD request (src unspecified, no ssla option present)
+        let ip6_nd_dad = matches!(
+            (ip6_rx.get_src().is_unspecified(), icmp6_rx.get_slla()),
+            (true, None)
+        );
+
         log!(
             "{} - <B>Received ICMPv6 Neighbor Solicitation message from {}, sending reply</>",
             packet_rx.tracker,
@@ -292,14 +315,19 @@ impl<'a> PacketHandler {
             let tracker = self.tracker();
 
             let icmp6_tx = icmp6_nd::NeighborAdvertisement::new()
-                .set_flag_s(true)
+                .set_flag_s(!ip6_nd_dad)
+                .set_flag_o(ip6_nd_dad)
                 .set_tnla(icmp6_rx.get_tnla())
                 .set_tlla(self.mac_address_tx);
             log!("{} - {}", tracker, icmp6_tx);
 
             let ip6_tx = ip6::Ip6::new()
-                .set_src(self.ip6_address_tx)
-                .set_dst(ip6_rx.get_src())
+                .set_src(icmp6_rx.get_tnla())
+                .set_dst(if ip6_nd_dad {
+                    Ip6Address::from("ff02::1") // use ff02::1 dst address when responding to DAD request
+                } else {
+                    ip6_rx.get_src() // use the rx dst address when responding to regular NS message
+                })
                 .set_hop(255)
                 .set_dlen(icmp6_tx.len() as u16)
                 .set_next(ip6::NEXT__ICMP6);
