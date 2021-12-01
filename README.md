@@ -4,7 +4,20 @@
 
 ### Examples:
 
-#### Sending response to ICMPv6 ND Neighbor Solicitation packet and then replying to couple ping packets
 
-![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ipv6_ping_00.png)
-![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ipv6_ping_01.png)
+#### Stack initialization, IPv6 DAD successfuly assigning two addresses
+
+![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_dad_00.png)
+![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_dad_01.png)
+
+
+#### Stack initialization, IPv6 DAD fails to assign 2007::7 address due to another host using it already
+
+![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_dad_02.png)
+![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_dad_03.png)
+
+
+#### Sending response to ICMPv6 ND Neighbor Solicitation and replying to ping requests
+
+![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_ping_00.png)
+![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_ping_01.png)
