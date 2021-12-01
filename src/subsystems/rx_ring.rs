@@ -73,7 +73,7 @@ impl RxRing {
 
     /// Pick up packets from NIC device and enqueue them for packet_handler
     fn rx_ring_thread(&mut self) {
-        log!("Thread spawned: 'rx_ring - {}'", self.nic_name);
+        log!("<lv>Thread spawned: 'rx_ring - {}'</>", self.nic_name);
 
         loop {
             match tap_io::read(&mut self.nic_fd) {
@@ -95,6 +95,7 @@ impl RxRing {
 
                     if let Err(error) = self.mpsc_to_packet_handler.send(packet_rx) {
                         log!("<CRIT> MPSC channel error: '{}'</>", error);
+                        panic!()
                     }
                 }
                 Err(error) => {

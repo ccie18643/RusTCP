@@ -60,14 +60,14 @@ impl TxRing {
 
     /// TX ring thread, dequeues packets from packet_handler and sends them to NIC device
     fn tx_ring_thread(&mut self) {
-        log!("Thread spawned: 'tx_ring - {}'", self.nic_name);
+        log!("<lv>Thread spawned: 'tx_ring - {}'</>", self.nic_name);
 
         loop {
             let mut packet_tx = match self.mpsc_from_packet_handler.recv() {
                 Ok(packet_tx) => packet_tx,
                 Err(error) => {
                     log!("<CRIT> MPSC channel error: '{}'</>", error);
-                    continue;
+                    panic!();
                 }
             };
 
