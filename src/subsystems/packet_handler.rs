@@ -37,14 +37,25 @@ use crate::protocols::ip6;
 use crate::subsystems::rx_ring;
 use crate::subsystems::tx_ring;
 use filedescriptor::FileDescriptor;
-use std::collections::HashSet;
+use itertools;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use std::time;
 
+const IP6_DAD_DELAY: u64 = 500;
+
 pub struct PacketDropError;
+
+/// Enum describing the IPv6 DAD states
+#[derive(PartialEq, Debug)]
+enum Ip6DadState {
+    Tentative,
+    Failure,
+    Success,
+}
 
 /// Packet handler structure
 pub struct PacketHandler {
@@ -53,10 +64,11 @@ pub struct PacketHandler {
     packet_sn: Arc<Mutex<usize>>,
     mpsc_from_rx_ring: mpsc::Receiver<Packet>,
     mpsc_to_tx_ring: mpsc::Sender<Packet>,
-    mac_address_rx: HashSet<MacAddress>,
+    mac_address_rx: Arc<Mutex<HashSet<MacAddress>>>,
     mac_address_tx: MacAddress,
-    ip6_address_rx: HashSet<Ip6Address>,
-    ip6_address_tx: Ip6Address,
+    ip6_address_rx: Arc<Mutex<HashSet<Ip6Address>>>,
+    ip6_address_tx: Arc<Mutex<HashSet<Ip6Address>>>,
+    ip6_dad_status: Arc<Mutex<HashMap<Ip6Address, Ip6DadState>>>,
 }
 
 impl<'a> PacketHandler {
@@ -85,18 +97,19 @@ impl<'a> PacketHandler {
             nic_mtu,
         );
 
-        // Initialize the L2 and L3 addressing
-        let mut mac_address_rx = HashSet::new();
-        let mut ip6_address_rx = HashSet::new();
+        // Initialize basic L2 and L3 addressing
+        let ip6_dad_status = Arc::new(Mutex::new(HashMap::new()));
+        let mac_address_rx = Arc::new(Mutex::new(HashSet::new()));
+        let mac_address_tx = mac_address;
+        let ip6_address_rx = Arc::new(Mutex::new(HashSet::new()));
+        let ip6_address_tx = Arc::new(Mutex::new(HashSet::new()));
 
-        mac_address_rx.insert(mac_address);
-        mac_address_rx.insert("ff:ff:ff:ff:ff:ff".into());
+        (*mac_address_rx.lock().unwrap()).insert(mac_address);
+        (*mac_address_rx.lock().unwrap()).insert("ff:ff:ff:ff:ff:ff".into());
 
-        mac_address_rx.insert("33:33:00:00:00:01".into());
-        ip6_address_rx.insert("ff02::1".into());
+        (*mac_address_rx.lock().unwrap()).insert("33:33:00:00:00:01".into());
+        (*ip6_address_rx.lock().unwrap()).insert("ff02::1".into());
 
-        // Create PacketHandler structure, need to use mutex to make sure
-        // the 'packet_sn' read and increment is an atomic operation
         #[allow(clippy::mutex_atomic)]
         PacketHandler {
             nic_name,
@@ -105,40 +118,101 @@ impl<'a> PacketHandler {
             mpsc_from_rx_ring,
             mpsc_to_tx_ring,
             mac_address_rx,
-            mac_address_tx: mac_address,
+            mac_address_tx,
             ip6_address_rx,
-            ip6_address_tx: Ip6Address::default(),
+            ip6_address_tx,
+            ip6_dad_status,
         }
+        .log_addressing_report()
     }
 
-    /// Start the packet handdler thread
-    pub fn run(mut self) {
+    /// Wait till the IPv6 DAD process finishes and report the L2/L3 addressing that has been assigned
+    pub fn log_addressing_report(self) -> PacketHandler {
+        {
+            let nic_name = self.nic_name.clone();
+            let ip6_dad_status = self.ip6_dad_status.clone();
+            let mac_address_rx = self.mac_address_rx.clone();
+            let ip6_address_rx = self.ip6_address_rx.clone();
+            let ip6_address_tx = self.ip6_address_tx.clone();
+
+            thread::spawn(move || {
+                log!("<lv>Thread spawned: 'Address report - {}'</>", nic_name);
+
+                loop {
+                    thread::sleep(time::Duration::from_millis(2 * IP6_DAD_DELAY));
+                    if !(*ip6_dad_status.lock().unwrap())
+                        .values()
+                        .any(|val: &Ip6DadState| *val == Ip6DadState::Tentative)
+                    {
+                        log!(
+                            "<B>INFO: {} mac_address_rx: {}",
+                            nic_name,
+                            itertools::join(&*mac_address_rx.lock().unwrap(), ", ")
+                        );
+                        log!(
+                            "<B>INFO: {} mac_address_tx: {}",
+                            nic_name,
+                            self.mac_address_tx
+                        );
+                        log!(
+                            "<B>INFO: {} ip6_address_rx: {}",
+                            nic_name,
+                            itertools::join(&*ip6_address_rx.lock().unwrap(), ", ")
+                        );
+                        log!(
+                            "<B>INFO: {} ip6_address_tx: {}",
+                            nic_name,
+                            itertools::join(&*ip6_address_tx.lock().unwrap(), ", ")
+                        );
+                        break;
+                    }
+                }
+
+                log!("<lv>Thread ended: 'Address report - {}'</>", nic_name);
+            });
+        }
+
+        self
+    }
+
+    /// Fork packet handler into separate thread
+    pub fn run(mut self) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             self.phrx_thread();
-        });
+        })
     }
 
-    /// Add IPv6 address to the interface configuration and start ICMPv6 ND DAD
-    /// check for it in separate thread
-    pub fn ip6_address(mut self, ip6_address: Ip6Address) -> PacketHandler {
-        self.ip6_address_tx = ip6_address;
-        self.ip6_address_rx.insert(ip6_address);
-        self.ip6_address_rx
-            .insert(ip6_address.solicited_node_multicast());
-        self.mac_address_rx
-            .insert(ip6_address.solicited_node_multicast().into());
+    /// Assign IPv6 address to the interface configuration and start ICMPv6 ND DAD process
+    pub fn set_ip6_address(self, ip6_address_tentative: Ip6Address) -> PacketHandler {
+        let ip6_address_tentative_snm = ip6_address_tentative.solicited_node_multicast();
+        let ip6_address_tentative_mac = MacAddress::from(ip6_address_tentative_snm);
 
-        // Send out three ICMPv6 ND DAD messages over three seconds
+        (*self.ip6_address_rx.lock().unwrap()).insert(ip6_address_tentative_snm);
+        (*self.mac_address_rx.lock().unwrap()).insert(ip6_address_tentative_mac);
+        (*self.ip6_dad_status.lock().unwrap())
+            .insert(ip6_address_tentative, Ip6DadState::Tentative);
+
         {
             let mpsc_to_tx_ring = self.mpsc_to_tx_ring.clone();
             let nic_name = self.nic_name.clone();
             let packet_sn = self.packet_sn.clone();
+            let ip6_dad_status = self.ip6_dad_status.clone();
+            let mac_address_rx = self.mac_address_rx.clone();
+            let ip6_address_rx = self.ip6_address_rx.clone();
+            let ip6_address_tx = self.ip6_address_tx.clone();
+            let mut ip6_dad_success = true;
 
             thread::spawn(move || {
-                log!("Thread spawned: 'icmp6_nd_dad - {}'", ip6_address);
+                log!(
+                    "<lv>Thread spawned: 'ip6_dad - {}'</>",
+                    ip6_address_tentative
+                );
 
                 for _ in 0..3 {
-                    log!("<B>Sending ICMPv6 ND DAD packet for {}</>", ip6_address);
+                    log!(
+                        "<B>Sending ICMPv6 ND DAD packet for {}</>",
+                        ip6_address_tentative
+                    );
 
                     let tracker = {
                         let mut packet_sn = packet_sn.lock().unwrap();
@@ -148,11 +222,12 @@ impl<'a> PacketHandler {
                         tracker
                     };
 
-                    let icmp6_tx = icmp6_nd::NeighborSolicitation::new().set_tnla(ip6_address);
+                    let icmp6_tx =
+                        icmp6_nd::NeighborSolicitation::new().set_tnla(ip6_address_tentative);
                     log!("{} - {}", tracker, icmp6_tx);
 
                     let ip6_tx = ip6::Ip6::new()
-                        .set_dst(ip6_address.solicited_node_multicast())
+                        .set_dst(ip6_address_tentative_snm)
                         .set_hop(255)
                         .set_dlen(icmp6_tx.len() as u16)
                         .set_next(ip6::NEXT__ICMP6);
@@ -160,7 +235,7 @@ impl<'a> PacketHandler {
 
                     let ether_tx = ether::Ether::new()
                         .set_src(self.mac_address_tx)
-                        .set_dst(ip6_address.solicited_node_multicast().into())
+                        .set_dst(ip6_address_tentative_mac)
                         .set_type(ether::TYPE__IP6);
                     log!("{} - {}", tracker, ether_tx);
 
@@ -171,11 +246,48 @@ impl<'a> PacketHandler {
 
                     if let Err(error) = mpsc_to_tx_ring.send(packet_tx) {
                         log!("<CRIT> MPSC channel error: '{}'</>", error);
+                        panic!();
                     }
 
-                    thread::sleep(time::Duration::from_millis(1000));
+                    thread::sleep(time::Duration::from_millis(IP6_DAD_DELAY));
+
+                    if (*ip6_dad_status.lock().unwrap())[&ip6_address_tentative]
+                        == Ip6DadState::Failure
+                    {
+                        ip6_dad_success = false;
+                        break;
+                    }
                 }
-                log!("Thread ended: 'icmp6_nd_dad - {}'", ip6_address);
+
+                if ip6_dad_success {
+                    (*ip6_dad_status.lock().unwrap())
+                        .insert(ip6_address_tentative, Ip6DadState::Success);
+                    (*ip6_address_rx.lock().unwrap()).insert(ip6_address_tentative);
+                    (*ip6_address_tx.lock().unwrap()).insert(ip6_address_tentative);
+                    log!("IPv6 DAD process succeeded for {}'", ip6_address_tentative);
+                } else {
+                    // Before removing solicited node multicast / multicast mac from RX check if
+                    // any other IPv6 address is using it
+                    let mut solicited_node_multicast_in_use = false;
+
+                    for (address, state) in (*ip6_dad_status.lock().unwrap()).iter() {
+                        if *state != Ip6DadState::Failure
+                            && address.solicited_node_multicast() == ip6_address_tentative_snm
+                        {
+                            solicited_node_multicast_in_use = true;
+                            break;
+                        }
+                    }
+
+                    if !solicited_node_multicast_in_use {
+                        (*ip6_address_rx.lock().unwrap()).remove(&ip6_address_tentative_snm);
+                        (*mac_address_rx.lock().unwrap()).remove(&ip6_address_tentative_mac);
+                    }
+
+                    log!("IPv6 DAD process failed for {}'", ip6_address_tentative);
+                }
+
+                log!("<lv>Thread ended: 'ip6_dad - {}'</>", ip6_address_tentative);
             });
         }
 
@@ -196,16 +308,16 @@ impl<'a> PacketHandler {
 
     /// Execute apropriate porotcol handler for each of the protocols in inbound packet
     fn phrx_thread(&mut self) {
-        log!("Thread spawned: 'packet_handler - {}'", self.nic_name);
-        log!("Listening on MAC addresses: {:?}", self.mac_address_rx);
-        log!("Listening on IPv6 addresses: {:?}", self.ip6_address_rx);
-
+        log!(
+            "<lv>Thread spawned: 'packet_handler - {}'</>",
+            self.nic_name
+        );
         loop {
             let packet_rx = match self.mpsc_from_rx_ring.recv() {
                 Ok(packet_rx) => packet_rx,
                 Err(error) => {
                     log!("<CRIT> MPSC channel error: '{}'</>", error);
-                    continue;
+                    panic!();
                 }
             };
 
@@ -258,7 +370,7 @@ impl<'a> PacketHandler {
     fn phrx_ether(&mut self, packet_rx: &'a Packet) -> Result<(), PacketDropError> {
         let ether_rx = packet_rx.ether().unwrap();
 
-        if !self.mac_address_rx.contains(&ether_rx.get_dst()) {
+        if !(*self.mac_address_rx.lock().unwrap()).contains(&ether_rx.get_dst()) {
             log!(
                 "{} Unknown dst MAC address {}, dropping",
                 packet_rx.tracker,
@@ -275,7 +387,7 @@ impl<'a> PacketHandler {
     fn phrx_ip6(&mut self, packet_rx: &'a Packet) -> Result<(), PacketDropError> {
         let ip6_rx = packet_rx.ip6().unwrap();
 
-        if !self.ip6_address_rx.contains(&ip6_rx.get_dst()) {
+        if !(*self.ip6_address_rx.lock().unwrap()).contains(&ip6_rx.get_dst()) {
             log!(
                 "{} Unknown dst IPv6 address {}, dropping",
                 packet_rx.tracker,
@@ -304,19 +416,27 @@ impl<'a> PacketHandler {
             (true, None)
         );
 
-        log!(
-            "{} - <B>Received ICMPv6 Neighbor Solicitation message from {}, sending reply</>",
-            packet_rx.tracker,
-            ip6_rx.get_src(),
-        );
+        if ip6_nd_dad {
+            log!(
+                "{} - <B>Received ICMPv6 ND DAD message from {}, sending reply</>",
+                packet_rx.tracker,
+                ip6_rx.get_src(),
+            );
+        } else {
+            log!(
+                "{} - <B>Received ICMPv6 Neighbor Solicitation message from {}, sending reply</>",
+                packet_rx.tracker,
+                ip6_rx.get_src(),
+            );
+        }
 
         // Send ICMPv6 ND Neighbor Advertisement
         {
             let tracker = self.tracker();
 
             let icmp6_tx = icmp6_nd::NeighborAdvertisement::new()
-                .set_flag_s(!ip6_nd_dad)
-                .set_flag_o(ip6_nd_dad)
+                .set_flag_s(!ip6_nd_dad) // no S flag when responding to DAD request
+                .set_flag_o(ip6_nd_dad) // O flag when respondidng to DAD request (this is not necessary but Linux uses it)
                 .set_tnla(icmp6_rx.get_tnla())
                 .set_tlla(self.mac_address_tx);
             log!("{} - {}", tracker, icmp6_tx);
@@ -346,6 +466,7 @@ impl<'a> PacketHandler {
 
             if let Err(error) = self.mpsc_to_tx_ring.send(packet_tx) {
                 log!("<CRIT> MPSC channel error: '{}'</>", error);
+                panic!();
             }
         }
 
@@ -357,15 +478,28 @@ impl<'a> PacketHandler {
         &mut self,
         packet_rx: &'a Packet,
     ) -> Result<(), PacketDropError> {
-        let _ether_rx = packet_rx.ether().unwrap();
+        let ether_rx = packet_rx.ether().unwrap();
         let ip6_rx = packet_rx.ip6().unwrap();
         let icmp6_rx = packet_rx.icmp6_neighbor_advertisement().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
-        log!(
-            "{} - <B>Received ICMPv6 Neighbor Advertisement message from {}, not giving a single fuck about it</>",
-            packet_rx.tracker,
-            ip6_rx.get_src(),
-        );
+
+        if let std::collections::hash_map::Entry::Occupied(mut ip6_dad_status) =
+            (*self.ip6_dad_status.lock().unwrap()).entry(icmp6_rx.get_tnla())
+        {
+            ip6_dad_status.insert(Ip6DadState::Failure);
+            log!(
+                "{} - <B>Received ICMPv6 ND DAD message from {}, that matches the {} tentative address, reporting DAD failure</>",
+                packet_rx.tracker,
+                ether_rx.get_src(),
+                icmp6_rx.get_tnla(),
+            )
+        } else {
+            log!(
+                "{} - <B>Received ICMPv6 Neighbor Advertisement message from {}, not giving a single fuck about it</>",
+                packet_rx.tracker,
+                ip6_rx.get_src(),
+            );
+        }
 
         Ok(())
     }
@@ -393,7 +527,7 @@ impl<'a> PacketHandler {
             log!("{} - {}", tracker, icmp6_tx);
 
             let ip6_tx = ip6::Ip6::new()
-                .set_src(self.ip6_address_tx)
+                .set_src(ip6_rx.get_dst())
                 .set_dst(ip6_rx.get_src())
                 .set_dlen(icmp6_tx.len() as u16)
                 .set_next(ip6::NEXT__ICMP6);
@@ -412,6 +546,7 @@ impl<'a> PacketHandler {
 
             if let Err(error) = self.mpsc_to_tx_ring.send(packet_tx) {
                 log!("<CRIT> MPSC channel error: '{}'</>", error);
+                panic!();
             }
         }
 
