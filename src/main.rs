@@ -38,10 +38,11 @@ fn main() {
     );
 
     packet_handler::PacketHandler::new(7, 1514, "02:00:00:77:77:77".into())
-        .ip6_address("2007::7".into())
+        .set_ip6_address("fe80::7".into())
+        .set_ip6_address("2007::7".into())
         .run();
 
     loop {
-        thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1000));
     }
 }
