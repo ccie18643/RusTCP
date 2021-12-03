@@ -25,12 +25,13 @@
 
 use crate::lib::errors;
 use crate::lib::ip6_address::Ip6Address;
+use byteorder::{ByteOrder, NetworkEndian};
 use regex::Regex;
 use std::convert::TryInto;
 use std::fmt;
 
-/// Convert MAC address format from string to bytes
-fn mac_str_to_bytes(mac_str: &str) -> Result<[u8; 6], errors::ParseAddressError> {
+/// Convert MAC address format from string to u64
+fn mac_str_to_u64(mac_str: &str) -> Result<u64, errors::ParseAddressError> {
     let re = Regex::new(
         "^([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):\
         ([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2}):([0-9A-Fa-f]{2})$",
@@ -39,20 +40,23 @@ fn mac_str_to_bytes(mac_str: &str) -> Result<[u8; 6], errors::ParseAddressError>
 
     match re.captures(mac_str) {
         Some(cap) => {
-            let mut bytes = [0u8; 6];
+            let mut bytes = [0u8; 8];
             for i in 0..6 {
-                bytes[i] = u8::from_str_radix(&cap[i + 1], 16).unwrap();
+                bytes[i + 2] = u8::from_str_radix(&cap[i + 1], 16).unwrap();
             }
-            Ok(bytes)
+            Ok(NetworkEndian::read_u64(&bytes))
         }
         None => Err(errors::ParseAddressError),
     }
 }
 
-/// Convert MAC address format from bytes to string
-fn bytes_to_mac_str(bytes: &[u8; 6]) -> String {
+/// Convert MAC address format from u64 to string
+fn u64_to_mac_str(address: u64) -> String {
+    let mut bytes = [0u8; 8];
+    NetworkEndian::write_u64(&mut bytes, address);
+
     let mut mac_str = String::with_capacity(19);
-    for byte in bytes {
+    for byte in &bytes[2..8] {
         mac_str.push_str(&format!("{:02x}:", byte));
     }
     mac_str.pop();
@@ -62,50 +66,42 @@ fn bytes_to_mac_str(bytes: &[u8; 6]) -> String {
 /// MAC address structure
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MacAddress {
-    bytes: [u8; 6],
+    address: u64,
 }
 
 impl MacAddress {
     /// Convert MAC address into array of bytes
     pub fn to_bytes(self) -> [u8; 6] {
-        self.bytes
+        let mut bytes = [0u8; 8];
+        NetworkEndian::write_u64(&mut bytes, self.address);
+        bytes[2..8].try_into().unwrap()
     }
 }
 
 /// Convert slice of bytes into MAC address
 impl From<&[u8]> for MacAddress {
-    fn from(bytes: &[u8]) -> Self {
+    fn from(bytes: &[u8]) -> MacAddress {
         MacAddress {
-            bytes: bytes.try_into().expect("Bad MAC address length"),
+            address: NetworkEndian::read_u64(&[&[0u8; 2], bytes].concat()),
         }
     }
 }
 
 /// Convert string into MAC address
 impl From<&str> for MacAddress {
-    fn from(string: &str) -> Self {
+    fn from(string: &str) -> MacAddress {
         MacAddress {
-            bytes: mac_str_to_bytes(string).expect("Bad MAC address format"),
+            address: mac_str_to_u64(string).expect("Bad MAC address format"),
         }
     }
 }
 
 /// Convert IPv6 multicast address into MAC address
 impl From<Ip6Address> for MacAddress {
-    fn from(ip6_address: Ip6Address) -> Self {
-        //
-        // TODO: Need to assert here to make sure ip6_address is a multicast address
-        //
-        let ip6_address_bytes: [u8; 16] = ip6_address.to_bytes();
+    fn from(ip6_address: Ip6Address) -> MacAddress {
+        assert!(ip6_address.is_multicast());
         MacAddress {
-            bytes: [
-                0x33,
-                0x33,
-                ip6_address_bytes[12],
-                ip6_address_bytes[13],
-                ip6_address_bytes[14],
-                ip6_address_bytes[15],
-            ],
+            address: 0x3333_0000_0000 | u128::from(ip6_address) as u32 as u64,
         }
     }
 }
@@ -113,14 +109,14 @@ impl From<Ip6Address> for MacAddress {
 /// Display MAC address
 impl fmt::Display for MacAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", bytes_to_mac_str(&self.bytes))
+        write!(f, "{}", u64_to_mac_str(self.address))
     }
 }
 
 /// Debug display MAC address
 impl fmt::Debug for MacAddress {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "MacAddress({})", bytes_to_mac_str(&self.bytes))
+        write!(f, "MacAddress({})", u64_to_mac_str(self.address))
     }
 }
 
@@ -129,25 +125,25 @@ impl fmt::Debug for MacAddress {
 mod tests {
     use super::*;
 
-    const TEST_CASES: [(&str, [u8; 6]); 3] = [
-        ("01:23:45:67:89:ab", [0x01, 0x23, 0x45, 0x67, 0x89, 0xab]),
-        ("00:00:00:00:00:00", [0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-        ("ff:ff:ff:ff:ff:ff", [0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+    const TEST_CASES: [(&str, u64); 3] = [
+        ("01:23:45:67:89:ab", 0x0123_4567_89ab),
+        ("00:00:00:00:00:00", 0x0000_0000_0000),
+        ("ff:ff:ff:ff:ff:ff", 0xffff_ffff_ffff),
     ];
 
     #[test]
     #[allow(non_snake_case)]
-    fn bytes_to_mac_str__assert() {
+    fn u64_to_mac_str__assert() {
         for test_case in TEST_CASES {
-            assert_eq!(bytes_to_mac_str(&test_case.1), test_case.0);
+            assert_eq!(u64_to_mac_str(test_case.1), test_case.0);
         }
     }
 
     #[test]
     #[allow(non_snake_case)]
-    fn mac_str_to_bytes__assert() {
+    fn mac_str_to_u64__assert() {
         for test_case in TEST_CASES {
-            assert_eq!(mac_str_to_bytes(test_case.0).unwrap(), test_case.1);
+            assert_eq!(mac_str_to_u64(test_case.0).unwrap(), test_case.1);
         }
     }
 }
