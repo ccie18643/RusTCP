@@ -23,10 +23,51 @@
 ############################################################################
 */
 
-pub mod errors;
-pub mod ip6_address;
-pub mod ip6_routing_table;
-pub mod logger;
-pub mod mac_address;
-pub mod packet;
-pub mod tap_io;
+#![allow(dead_code)]
+
+use std::collections::HashMap;
+
+struct RoutingTable {
+    routing_table: HashMap<(u128, usize), usize>,
+    prefix_len_table: Vec<usize>,
+}
+
+impl RoutingTable {
+    fn new() -> RoutingTable {
+        RoutingTable {
+            routing_table: HashMap::new(),
+            prefix_len_table: Vec::with_capacity(127),
+        }
+    }
+
+    /// Add prefix to routing table
+    fn add(mut self, prefix: u128, prefix_len: usize, next_hop_id: usize) -> RoutingTable {
+        self.routing_table.insert((prefix, prefix_len), next_hop_id);
+        if prefix_len != 0 {
+            self.prefix_len_table.push(128 - prefix_len);
+            self.prefix_len_table.sort_unstable();
+        }
+        self
+    }
+
+    /// Remove prefix from routing table
+    fn remove(mut self, prefix: u128, prefix_len: usize) -> RoutingTable {
+        self.routing_table.remove(&(prefix, prefix_len));
+        self.prefix_len_table.clear();
+        for (_, prefix_len) in self.routing_table.keys() {
+            self.prefix_len_table.push(128 - prefix_len);
+        }
+        self.prefix_len_table.sort_unstable();
+        self
+    }
+
+    /// Find the longest match for given address
+    fn find(&self, address: u128) -> Option<&usize> {
+        for n in self.prefix_len_table.iter() {
+            if let Some(next_hop_id) = self.routing_table.get(&(address >> n << n, 128 - n)) {
+                return Some(next_hop_id);
+            }
+        }
+        self.routing_table.get(&(0u128, 0usize))
+    }
+}
