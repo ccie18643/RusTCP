@@ -97,7 +97,7 @@ impl Ip6 {
     }
 
     /// Get the 'hop' header field
-    pub fn _hop(&self) -> u8 {
+    pub fn get_hop(&self) -> u8 {
         self._hop
     }
 
