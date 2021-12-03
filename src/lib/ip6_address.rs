@@ -119,7 +119,7 @@ pub struct Ip6Address {
 }
 
 impl Ip6Address {
-    /// Helper converting IPv6 address to array of bytes
+    /// Convert IPv6 address to array of bytes
     pub fn to_bytes(self) -> [u8; 16] {
         let mut bytes = [0u8; 16];
         NetworkEndian::write_u128(&mut bytes, self.address);
@@ -131,17 +131,54 @@ impl Ip6Address {
         self.address == 0
     }
 
+    /// Check if address is a loopback
+    pub fn is_loopback(&self) -> bool {
+        self.address == 0x0000_0000_0000_0000_0000_0000_0000_0001
+    }
+
+    /// Check if address is global
+    pub fn is_global(&self) -> bool {
+        self.address & 0xE000_0000_0000_0000_0000_0000_0000_0000
+            == 0x2000_0000_0000_0000_0000_0000_0000_0000
+    }
+
+    /// Check if address is private
+    pub fn is_private(&self) -> bool {
+        self.address & 0xfe00_0000_0000_0000_0000_0000_0000_0000
+            == 0xfc00_0000_0000_0000_0000_0000_0000_0000
+    }
+
+    /// Check if address is link-local
+    pub fn is_link_local(&self) -> bool {
+        self.address & 0xFFC0_0000_0000_0000_0000_0000_0000_0000
+            == 0xFE80_0000_0000_0000_0000_0000_0000_0000
+    }
+
+    /// Check if address is a multicast
+    pub fn is_multicast(&self) -> bool {
+        self.address & 0xff00_0000_0000_0000_0000_0000_0000_0000
+            == 0xff00_0000_0000_0000_0000_0000_0000_0000
+    }
+
     /// Check if address is a solicited node multicast
     pub fn is_solicited_node_multicast(&self) -> bool {
         self.address & 0xffff_ffff_ffff_ffff_ffff_ffff_ff00_0000
             == 0xff02_0000_0000_0000_0000_0001_ff00_0000
     }
+
     /// Create coresponding Solicited Node Multicast address
     pub fn solicited_node_multicast(&self) -> Ip6Address {
         Ip6Address {
             address: self.address & 0x0000_0000_0000_0000_0000_0000_00ff_ffff
                 | 0xff02_0000_0000_0000_0000_0001_ff00_0000,
         }
+    }
+}
+
+/// Convert IPv6 address into u128
+impl From<Ip6Address> for u128 {
+    fn from(ip6_address: Ip6Address) -> u128 {
+        ip6_address.address
     }
 }
 
