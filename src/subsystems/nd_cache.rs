@@ -23,7 +23,52 @@
 ############################################################################
 */
 
-pub mod nd_cache;
-pub mod packet_handler;
-pub mod rx_ring;
-pub mod tx_ring;
+#![allow(dead_code)]
+
+use crate::lib::ip6_address::Ip6Address;
+use crate::lib::packet::Packet;
+use crate::log_nd_cache as log;
+use std::collections::HashMap;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time;
+
+pub enum NdCacheState {
+    Incomplete,
+    Reachable,
+    Stale,
+    Delay,
+    Probe,
+}
+
+pub struct NdCache {
+    state_table: Arc<Mutex<HashMap<Ip6Address, NdCacheState>>>,
+}
+
+impl NdCache {
+    pub fn new(mpsc_to_tx_ring: mpsc::Sender<Packet>, nic_name: String) -> NdCache {
+        let nd_cache = NdCache {
+            state_table: Arc::new(Mutex::new(HashMap::with_capacity(256))),
+        };
+
+        {
+            let state_table = nd_cache.state_table.clone();
+            thread::spawn(move || nd_cache_thread(state_table, mpsc_to_tx_ring, nic_name));
+        }
+
+        nd_cache
+    }
+}
+
+fn nd_cache_thread(
+    _state_table: Arc<Mutex<HashMap<Ip6Address, NdCacheState>>>,
+    _mpsc_to_tx_ring: mpsc::Sender<Packet>,
+    nic_name: String,
+) {
+    log!("<lv>Thread spawned: 'nd_cache - {}'</>", nic_name);
+
+    loop {
+        thread::sleep(time::Duration::from_millis(1000));
+    }
+}

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -25,6 +23,8 @@
 ############################################################################
 */
 
+#![allow(dead_code)]
+
 use crate::lib::ip6_address::Ip6Address;
 use crate::lib::mac_address::MacAddress;
 use crate::lib::packet::{Icmp6Kind, Packet, ProtoKind};
@@ -34,6 +34,7 @@ use crate::protocols::ether;
 use crate::protocols::icmp6;
 use crate::protocols::icmp6_nd;
 use crate::protocols::ip6;
+use crate::subsystems::nd_cache;
 use crate::subsystems::rx_ring;
 use crate::subsystems::tx_ring;
 use filedescriptor::FileDescriptor;
@@ -42,7 +43,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-
 use std::time;
 
 const IP6_DAD_DELAY: u64 = 500;
@@ -69,6 +69,7 @@ pub struct PacketHandler {
     ip6_address_rx: Arc<Mutex<HashSet<Ip6Address>>>,
     ip6_address_tx: Arc<Mutex<HashSet<Ip6Address>>>,
     ip6_dad_status: Arc<Mutex<HashMap<Ip6Address, Ip6DadState>>>,
+    nd_cache: nd_cache::NdCache,
 }
 
 impl<'a> PacketHandler {
@@ -97,6 +98,9 @@ impl<'a> PacketHandler {
             nic_mtu,
         );
 
+        // Initialize ND cache
+        let nd_cache = nd_cache::NdCache::new(mpsc_to_tx_ring.clone(), nic_name.clone());
+
         // Initialize basic L2 and L3 addressing
         let ip6_dad_status = Arc::new(Mutex::new(HashMap::new()));
         let mac_address_rx = Arc::new(Mutex::new(HashSet::new()));
@@ -122,6 +126,7 @@ impl<'a> PacketHandler {
             ip6_address_rx,
             ip6_address_tx,
             ip6_dad_status,
+            nd_cache,
         }
         .log_addressing_report()
     }
