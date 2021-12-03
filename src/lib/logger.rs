@@ -178,8 +178,8 @@ impl std::fmt::Display for LogChanel {
             LogChanel::Timer => "timer".fmt(f),
             LogChanel::RxRing => "rx-ring".fmt(f),
             LogChanel::TxRing => "tx-ring".fmt(f),
-            LogChanel::ArpCache => "arp-c".fmt(f),
-            LogChanel::NdCache => "nd-c".fmt(f),
+            LogChanel::ArpCache => "arp_cache".fmt(f),
+            LogChanel::NdCache => "nd_cache".fmt(f),
             LogChanel::Ether => "ether".fmt(f),
             LogChanel::Arp => "arp".fmt(f),
             LogChanel::Ip4 => "ip4".fmt(f),
@@ -189,10 +189,10 @@ impl std::fmt::Display for LogChanel {
             LogChanel::Udp => "udp".fmt(f),
             LogChanel::Tcp => "tcp".fmt(f),
             LogChanel::Socket => "socket".fmt(f),
-            LogChanel::TcpSession => "tcp-ss".fmt(f),
+            LogChanel::TcpSession => "tcp_ss".fmt(f),
             LogChanel::Service => "service".fmt(f),
             LogChanel::Client => "client".fmt(f),
-            LogChanel::PacketHandler => "p_hndlr".fmt(f),
+            LogChanel::PacketHandler => "pkt_hndlr".fmt(f),
         }
     }
 }
@@ -242,7 +242,7 @@ impl Logger<'_> {
         if self.chanels.contains(&chanel) {
             let time = self.start_time.elapsed().expect("System time error");
             let mut message = format!(
-                " <g>{:04}.{:02}</> | <b>{:7}</> | {}</>",
+                " <g>{:04}.{:02}</> | <b>{:9}</> | {}</>",
                 time.as_secs(),
                 time.subsec_nanos() as u64 / 10_000_000,
                 chanel,
