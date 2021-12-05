@@ -34,3 +34,13 @@ impl fmt::Display for ParseAddressError {
         write!(f, "Address cannot be parsed")
     }
 }
+
+/// Mask error used by IP address parsers
+#[derive(Debug, Clone)]
+pub struct NonContiguousMaskError;
+
+impl fmt::Display for NonContiguousMaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Mask is not contiguous")
+    }
+}

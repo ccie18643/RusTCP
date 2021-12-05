@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -25,17 +23,19 @@
 ############################################################################
 */
 
+#![allow(dead_code)]
+
 use crate::lib::errors;
 use byteorder::{ByteOrder, NetworkEndian};
 use regex::Regex;
 use std::fmt;
 
 /// Convert IPv6 address format from string to u128
-fn ip6_str_to_u128(ip6_str: &str) -> Result<u128, errors::ParseAddressError> {
+fn ip6_str_to_u128(ip6_str: &str) -> Result<(u128, u128), errors::ParseAddressError> {
     let mut bytes = [0u8; 16];
 
     let re = Regex::new(
-        "^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|\
+        "^((([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|\
         ([0-9a-fA-F]{1,4}:){1,7}:|\
         ([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|\
         ([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|\
@@ -43,7 +43,8 @@ fn ip6_str_to_u128(ip6_str: &str) -> Result<u128, errors::ParseAddressError> {
         ([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|\
         ([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|\
         [0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|\
-        :((:[0-9a-fA-F]{1,4}){1,7}|:))$",
+        :((:[0-9a-fA-F]{1,4}){1,7}|:)))\
+        (/(([0-9])|([1-9][0-9])|(1[0-1][0-9])|(12[0-8])))?$",
     )
     .unwrap();
 
@@ -51,28 +52,35 @@ fn ip6_str_to_u128(ip6_str: &str) -> Result<u128, errors::ParseAddressError> {
         return Err(errors::ParseAddressError);
     }
 
-    let ip6_str_colon_count = ip6_str.matches(':').count();
+    let mut split = ip6_str.split('/');
+    let (address, prefix_len) = (split.next().unwrap(), split.next().unwrap_or("128"));
+    let prefix_len = 128 - prefix_len.parse::<u32>().unwrap();
+
+    let address_colon_count = address.matches(':').count();
     let mut ip6_word_number = 0;
 
-    for (ip6_str_group_number, ip6_str_group) in ip6_str.split(':').enumerate() {
-        if ip6_str_group.is_empty() {
-            if ip6_str_group_number != 0 && ip6_str_group_number != ip6_str_colon_count {
-                ip6_word_number += 7 - ip6_str_colon_count;
+    for (address_group_number, address_group) in address.split(':').enumerate() {
+        if address_group.is_empty() {
+            if address_group_number != 0 && address_group_number != address_colon_count {
+                ip6_word_number += 7 - address_colon_count;
             }
         } else {
             NetworkEndian::write_u16(
                 &mut bytes[ip6_word_number * 2..ip6_word_number * 2 + 2],
-                u16::from_str_radix(ip6_str_group, 16).unwrap(),
+                u16::from_str_radix(address_group, 16).unwrap(),
             );
         };
         ip6_word_number += 1;
     }
 
-    Ok(NetworkEndian::read_u128(&bytes))
+    let address = NetworkEndian::read_u128(&bytes);
+    let mask = u128::MAX.checked_shl(prefix_len).unwrap_or(0);
+
+    Ok((address, mask))
 }
 
 /// Convert IPv6 address format from u128 to string
-fn u128_to_ip6_str(address: u128) -> String {
+fn u128_to_ip6_str(address: u128, mask: u128) -> Result<String, errors::NonContiguousMaskError> {
     let mut ip6_str = String::with_capacity(40);
 
     let mut bytes = [0u8; 16];
@@ -109,13 +117,24 @@ fn u128_to_ip6_str(address: u128) -> String {
         ip6_str = "::".to_string();
     }
 
-    ip6_str
+    if mask.count_zeros() != mask.trailing_zeros() {
+        return Err(errors::NonContiguousMaskError);
+    }
+
+    let prefix_len = mask.leading_ones();
+
+    if prefix_len < 128 {
+        ip6_str = format!("{}/{}", ip6_str, prefix_len);
+    }
+
+    Ok(ip6_str)
 }
 
 /// IPv6 address structure
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Ip6Address {
     address: u128,
+    mask: u128,
 }
 
 impl Ip6Address {
@@ -124,6 +143,27 @@ impl Ip6Address {
         let mut bytes = [0u8; 16];
         NetworkEndian::write_u128(&mut bytes, self.address);
         bytes
+    }
+
+    /// Convert to host address
+    pub fn host(&self) -> Ip6Address {
+        Ip6Address {
+            address: self.address,
+            mask: 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+        }
+    }
+
+    /// Convert to network address
+    pub fn network(&self) -> Ip6Address {
+        Ip6Address {
+            address: self.address & self.mask,
+            mask: self.mask,
+        }
+    }
+
+    /// Check if provided address is part of this network
+    pub fn contains(&self, other: Ip6Address) -> bool {
+        self.address & self.mask == other.address & self.mask
     }
 
     /// Check if address is unspecified
@@ -171,6 +211,7 @@ impl Ip6Address {
         Ip6Address {
             address: self.address & 0x0000_0000_0000_0000_0000_0000_00ff_ffff
                 | 0xff02_0000_0000_0000_0000_0001_ff00_0000,
+            mask: 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
         }
     }
 }
@@ -187,6 +228,7 @@ impl From<&[u8]> for Ip6Address {
     fn from(bytes: &[u8]) -> Ip6Address {
         Ip6Address {
             address: NetworkEndian::read_u128(bytes),
+            mask: 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
         }
     }
 }
@@ -194,26 +236,30 @@ impl From<&[u8]> for Ip6Address {
 /// Convert string into IPv6 address
 impl From<&str> for Ip6Address {
     fn from(string: &str) -> Ip6Address {
-        Ip6Address {
-            address: ip6_str_to_u128(string).expect("Bad IPv6 address format"),
-        }
+        let (address, mask) = ip6_str_to_u128(string).expect("Bad IPv6 address format");
+        Ip6Address { address, mask }
     }
 }
 
 /// Display IPv6 address
 impl fmt::Display for Ip6Address {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", u128_to_ip6_str(self.address))
+        write!(f, "{}", u128_to_ip6_str(self.address, self.mask).unwrap())
     }
 }
 
 /// Debug display IPv6 address
 impl fmt::Debug for Ip6Address {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Ip6Address({})", u128_to_ip6_str(self.address))
+        write!(
+            f,
+            "Ip6Address({})",
+            u128_to_ip6_str(self.address, self.mask).unwrap()
+        )
     }
 }
 
+/*
 /// Unit tests
 #[cfg(test)]
 mod tests {
@@ -249,3 +295,4 @@ mod tests {
         }
     }
 }
+*/
