@@ -25,6 +25,7 @@
 
 use crate::lib::packet::Packet;
 use crate::lib::tap_io;
+use crate::lib::util;
 use crate::log_rx_ring as log;
 use filedescriptor::FileDescriptor;
 use std::sync::mpsc;
@@ -33,8 +34,8 @@ use std::thread;
 /// RX ring structure
 pub struct RxRing {
     nic_name: String,
-    nic_fd: FileDescriptor,
     nic_mtu: usize,
+    nic_fd: FileDescriptor,
     packet_sn: usize,
     mpsc_to_packet_handler: mpsc::Sender<Packet>,
 }
@@ -43,14 +44,14 @@ impl RxRing {
     /// Initialize RX ring structure, spawn it in separate thread
     /// and return MPSC channel used to enqueue frames to packet_handler
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(nic_name: String, nic_fd: FileDescriptor, nic_mtu: usize) -> mpsc::Receiver<Packet> {
+    pub fn new(nic_name: String, nic_mtu: usize, nic_fd: FileDescriptor) -> mpsc::Receiver<Packet> {
         let (mpsc_to_packet_handler, mpsc_from_rx_ring) = mpsc::channel();
 
         thread::spawn(move || {
             RxRing {
                 nic_name,
-                nic_fd,
                 nic_mtu,
+                nic_fd,
                 packet_sn: 0,
                 mpsc_to_packet_handler,
             }
@@ -58,17 +59,6 @@ impl RxRing {
         });
 
         mpsc_from_rx_ring
-    }
-
-    /// Create tracker string to be used as packet identifier
-    fn tracker(&mut self) -> String {
-        let tracker = format!(
-            "<lg>[RX/{}/{:04X}]</>",
-            self.nic_name.to_uppercase(),
-            self.packet_sn
-        );
-        self.packet_sn = self.packet_sn.wrapping_add(1);
-        tracker
     }
 
     /// Pick up packets from NIC device and enqueue them for packet_handler
@@ -83,7 +73,10 @@ impl RxRing {
                         continue;
                     }
 
-                    let mut packet_rx = Packet::new(frame_rx, self.tracker());
+                    let mut packet_rx = Packet::new(
+                        frame_rx,
+                        util::tracker("RX", &self.nic_name, &mut self.packet_sn),
+                    );
 
                     packet_rx.parse();
 
