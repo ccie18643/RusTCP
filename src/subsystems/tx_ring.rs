@@ -33,8 +33,8 @@ use std::thread;
 /// TX ring structure
 pub struct TxRing {
     nic_name: String,
-    nic_fd: FileDescriptor,
     nic_mtu: usize,
+    nic_fd: FileDescriptor,
     mpsc_from_packet_handler: mpsc::Receiver<Packet>,
 }
 
@@ -42,14 +42,14 @@ impl TxRing {
     /// Initialize RX ring structure, spawn it in separate thread and return MPSC channel
     /// used to dequeue frames from packet_handler
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(nic_name: String, nic_fd: FileDescriptor, nic_mtu: usize) -> mpsc::Sender<Packet> {
+    pub fn new(nic_name: String, nic_mtu: usize, nic_fd: FileDescriptor) -> mpsc::Sender<Packet> {
         let (mpsc_to_tx_ring, mpsc_from_packet_handler) = mpsc::channel();
 
         thread::spawn(move || {
             TxRing {
                 nic_name,
-                nic_fd,
                 nic_mtu,
+                nic_fd,
                 mpsc_from_packet_handler,
             }
             .tx_ring_thread();
