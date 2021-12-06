@@ -162,7 +162,7 @@ impl Ip6Address {
     }
 
     /// Check if provided address is part of this network
-    pub fn contains(&self, other: Ip6Address) -> bool {
+    pub fn contains(&self, other: &Ip6Address) -> bool {
         self.address & self.mask == other.address & self.mask
     }
 
@@ -194,13 +194,19 @@ impl Ip6Address {
             == 0xFE80_0000_0000_0000_0000_0000_0000_0000
     }
 
-    /// Check if address is a multicast
+    /// Check if address is unicast
+    pub fn is_unicast(&self) -> bool {
+        self.address & 0xff00_0000_0000_0000_0000_0000_0000_0000
+            != 0xff00_0000_0000_0000_0000_0000_0000_0000
+    }
+
+    /// Check if address is multicast
     pub fn is_multicast(&self) -> bool {
         self.address & 0xff00_0000_0000_0000_0000_0000_0000_0000
             == 0xff00_0000_0000_0000_0000_0000_0000_0000
     }
 
-    /// Check if address is a solicited node multicast
+    /// Check if address is solicited node multicast
     pub fn is_solicited_node_multicast(&self) -> bool {
         self.address & 0xffff_ffff_ffff_ffff_ffff_ffff_ff00_0000
             == 0xff02_0000_0000_0000_0000_0001_ff00_0000
