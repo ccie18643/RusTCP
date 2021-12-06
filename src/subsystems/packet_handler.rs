@@ -409,6 +409,9 @@ impl<'a> PacketHandler {
         let icmp6_rx = packet_rx.icmp6_neighbor_solicitation().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
 
+        // Report NS message to ND cache
+        // self.nd_cache.report_ns(ip6_rx, icmp6_rx);
+
         // Determine if packet is part of DAD request (src unspecified, no ssla option present)
         let ip6_nd_dad = matches!(
             (ip6_rx.get_src().is_unspecified(), icmp6_rx.get_slla()),
@@ -477,27 +480,24 @@ impl<'a> PacketHandler {
         &mut self,
         packet_rx: &'a Packet,
     ) -> Result<(), PacketDropError> {
-        let ether_rx = packet_rx.ether().unwrap();
-        let ip6_rx = packet_rx.ip6().unwrap();
+        let _ether_rx = packet_rx.ether().unwrap();
+        let _ip6_rx = packet_rx.ip6().unwrap();
         let icmp6_rx = packet_rx.icmp6_neighbor_advertisement().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
 
+        // Report NA message to ND cache
+        // self.nd_cache.report_na(icmp6_rx);
+
+        // Take care of DAD process if apliccable
         if let std::collections::hash_map::Entry::Occupied(mut ip6_dad_status) =
             (*self.ip6_dad_status.lock().unwrap()).entry(icmp6_rx.get_tnla())
         {
             ip6_dad_status.insert(Ip6DadState::Failure);
             log!(
-                "{} - <B>Received ICMPv6 ND DAD message from {}, that matches the {} tentative address, reporting DAD failure</>",
+                "{} - <B>Message matches ND DAD entry {}, reporting DAD failure</>",
                 packet_rx.tracker,
-                ether_rx.get_src(),
                 icmp6_rx.get_tnla(),
             )
-        } else {
-            log!(
-                "{} - <B>Received ICMPv6 Neighbor Advertisement message from {}, not giving a single fuck about it</>",
-                packet_rx.tracker,
-                ip6_rx.get_src(),
-            );
         }
 
         Ok(())
@@ -515,16 +515,16 @@ impl<'a> PacketHandler {
             ip6_rx.get_src(),
         );
 
+        // Report upper layer reachability to ND cache
+        // self.nd_cache.report_reachability(ip6_rx.get_src());
+
         // Send ICMPv6 Echo Reply
         {
             let mut ip6_tx_src = ip6_rx.get_dst();
 
-            if ip6_tx_src.is_multicast() {
-                for address in (*self.ip6_address_tx.lock().unwrap()).iter() {
-                    if address.contains(ip6_rx.get_src()) {
-                        ip6_tx_src = address.host();
-                    }
-                }
+            if ip6_rx.get_dst().is_multicast() {
+                ip6_tx_src = util::ip6_select_src(&ip6_rx.get_src(), &self.ip6_address_tx)
+                    .expect("TODO: Unable to pick source address");
             }
 
             let tracker = util::tracker("TX", &self.nic_name, &mut self.packet_sn.lock().unwrap());
