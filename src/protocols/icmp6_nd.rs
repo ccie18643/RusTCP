@@ -78,10 +78,10 @@ impl NeighborSolicitation {
     }
 
     /// Get the value of 'slla' nd option if present
-    pub fn get_slla(&self) -> Option<&MacAddress> {
+    pub fn get_slla(&self) -> Option<MacAddress> {
         for opt in &self.opts {
             match opt {
-                NdOpt::SLLA(slla) => return Some(slla),
+                NdOpt::SLLA(slla) => return Some(*slla),
                 _ => continue,
             }
         }
@@ -225,10 +225,10 @@ impl NeighborAdvertisement {
     }
 
     /// Get the value of 'tlla' nd option if present
-    pub fn get_tlla(&self) -> Option<&MacAddress> {
+    pub fn get_tlla(&self) -> Option<MacAddress> {
         for opt in &self.opts {
             match opt {
-                NdOpt::TLLA(tlla) => return Some(tlla),
+                NdOpt::TLLA(tlla) => return Some(*tlla),
                 _ => continue,
             }
         }
