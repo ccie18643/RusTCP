@@ -23,6 +23,12 @@
 ############################################################################
 */
 
+#![allow(dead_code)]
+
+use crate::lib::ip6_address::Ip6Address;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+
 /// Create tracker string to be used as packet identifier and increment the serial number
 pub fn tracker(tag: &str, nic_name: &str, packet_sn: &mut usize) -> String {
     let color = match tag {
@@ -39,4 +45,17 @@ pub fn tracker(tag: &str, nic_name: &str, packet_sn: &mut usize) -> String {
     );
     *packet_sn = (*packet_sn).wrapping_add(1);
     tracker
+}
+
+/// Select IPv6 packet source address based on it's destination
+pub fn ip6_select_src(
+    dst: &Ip6Address,
+    ip6_address_tx: &Arc<Mutex<HashSet<Ip6Address>>>,
+) -> Option<Ip6Address> {
+    for address in (*ip6_address_tx.lock().unwrap()).iter() {
+        if address.contains(dst) {
+            return Some(address.host());
+        }
+    }
+    None
 }
