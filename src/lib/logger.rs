@@ -30,97 +30,135 @@ use std::time::SystemTime;
 
 #[macro_export]
 macro_rules! log {
-    ($chanel:expr, $($arg:tt)*) => ($crate::lib::logger::LOGGER.log($chanel, &format!("{}", std::format_args!($($arg)*))));
+    ($chanel:expr, $($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($chanel, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_stack {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Stack, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Stack, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_timer {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Timer, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Timer, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_rx_ring {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::RxRing, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::RxRing, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_tx_ring {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::TxRing, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::TxRing, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_arp_cache {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::ArpCache, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::ArpCache, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_nd_cache {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::NdCache, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::NdCache, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_ether {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Ether, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Ether, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_ip4 {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Ip4, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Ip4, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_ip6 {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Ip6, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Ip6, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_icmp4 {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Icmp4, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Icmp4, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_icmp6 {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Icmp6, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Icmp6, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_udp {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Udp, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Udp, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_tcp {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Tcp, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Tcp, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_socket {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Socket, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Socket, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_tcp_session {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::TcpSession, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::TcpSession, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_service {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Service, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Service, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_client {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Client, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::Client, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 #[macro_export]
 macro_rules! log_packet_handler {
-    ($($arg:tt)*) => ($crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::PacketHandler, &format!("{}", std::format_args!($($arg)*))));
+    ($($arg:tt)*) => (if cfg!(feature = "log") {
+        $crate::lib::logger::LOGGER.log($crate::lib::logger::LogChanel::PacketHandler, &format!("{}", std::format_args!($($arg)*)))
+    });
 }
 
 lazy_static! {
