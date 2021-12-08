@@ -409,8 +409,8 @@ impl<'a> PacketHandler {
         let icmp6_rx = packet_rx.icmp6_neighbor_solicitation().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
 
-        // Report NS message to ND cache
-        // self.nd_cache.report_ns(ip6_rx, icmp6_rx);
+        // Report inbound NS message to ND cache
+        self.nd_cache.report_ns(ip6_rx, icmp6_rx);
 
         // Determine if packet is part of DAD request (src unspecified, no ssla option present)
         let ip6_nd_dad = matches!(
@@ -485,8 +485,8 @@ impl<'a> PacketHandler {
         let icmp6_rx = packet_rx.icmp6_neighbor_advertisement().unwrap();
         log!("{} - {}", packet_rx.tracker, icmp6_rx);
 
-        // Report NA message to ND cache
-        // self.nd_cache.report_na(icmp6_rx);
+        // Report inbound NA message to ND cache
+        self.nd_cache.report_na(icmp6_rx);
 
         // Take care of DAD process if apliccable
         if let std::collections::hash_map::Entry::Occupied(mut ip6_dad_status) =
@@ -515,8 +515,8 @@ impl<'a> PacketHandler {
             ip6_rx.get_src(),
         );
 
-        // Report upper layer reachability to ND cache
-        // self.nd_cache.report_reachability(ip6_rx.get_src());
+        // Report upper layer inbound activity to ND cache
+        self.nd_cache.report_inbound_activity(ip6_rx.get_src());
 
         // Send ICMPv6 Echo Reply
         {

@@ -25,6 +25,11 @@
 
 #![allow(dead_code)]
 
+use crate::config::{
+    ND_CACHE__DELAY_TIME, ND_CACHE__INCOMPLETE_RETRY_LIMIT, ND_CACHE__INCOMPLETE_RETRY_TIME,
+    ND_CACHE__PROBE_RETRY_LIMIT, ND_CACHE__PROBE_RETRY_TIME, ND_CACHE__REACHABLE_TIME,
+    ND_CACHE__TIME_LOOP_DELAY,
+};
 use crate::lib::ip6_address::Ip6Address;
 use crate::lib::mac_address::MacAddress;
 use crate::lib::packet::Packet;
@@ -40,25 +45,19 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time;
 
-const INCOMPLETE_RETRY_TIME: u64 = 1;
-const INCOMPLETE_RETRY_LIMIT: usize = 2;
-const REACHABLE_TIME: u64 = 45;
-const DELAY_TIME: u64 = 5;
-const PROBE_RETRY_TIME: u64 = 1;
-const PROBE_RETRY_LIMIT: usize = 2;
-
-pub enum NdCacheState {
+#[derive(Debug)]
+enum State {
     Incomplete(time::Instant, usize),
     Reachable(MacAddress, time::Instant),
-    Stale(MacAddress, time::Instant),
+    Stale(MacAddress),
     Delay(MacAddress, time::Instant),
     Probe(MacAddress, time::Instant, usize),
 }
 
 #[allow(clippy::mutex_atomic)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct NdCache {
-    state_table: Arc<Mutex<HashMap<Ip6Address, NdCacheState>>>,
+    state_table: Arc<Mutex<HashMap<Ip6Address, State>>>,
     nic_name: String,
     nic_mtu: usize,
     packet_sn: Arc<Mutex<usize>>,
@@ -90,79 +89,89 @@ impl NdCache {
         thread::spawn(move || {
             log!("<lv>Thread spawned: 'nd_cache - {}'</>", self_c.nic_name);
             loop {
-                for (nla, state) in (*self_c.state_table.lock().unwrap()).iter() {
-                    match state {
-                        NdCacheState::Incomplete(timestamp, attempt) => {
-                            if timestamp.elapsed().as_secs() >= INCOMPLETE_RETRY_TIME {
-                                // |white| timeout, retransmit limit reached
-                                // INCOMPLETE -> NONEXISTENT, Send ICMPv6 error
-                                if *attempt >= INCOMPLETE_RETRY_LIMIT {
-                                    (*self_c.state_table.lock().unwrap()).remove(nla);
-                                    log!("{} - INCOMPLETE -> NONEXISTENT", nla);
-                                    // TODO: Send ICMPv6 error
-                                    continue;
-                                }
-                                (*self_c.state_table.lock().unwrap()).insert(
-                                    *nla,
-                                    NdCacheState::Incomplete(time::Instant::now(), attempt + 1),
-                                );
-                                log!(
+                {
+                    let state_table = &mut *self_c.state_table.lock().unwrap();
+                    let state_table_keys: Vec<Ip6Address> = state_table.keys().cloned().collect();
+                    for cnla in state_table_keys {
+                        match state_table[&cnla] {
+                            State::Incomplete(timestamp, attempt) => {
+                                if timestamp.elapsed().as_secs() >= ND_CACHE__INCOMPLETE_RETRY_TIME
+                                {
+                                    // |white| retransmit limit reached
+                                    // INCOMPLETE -> NONEXISTENT, Send ICMPv6 error
+                                    if attempt >= ND_CACHE__INCOMPLETE_RETRY_LIMIT {
+                                        state_table.remove(&cnla);
+                                        log!("{} - Incomplete retry limit reached <lb>[INCOMPLETE -> NONEXISTENT]", cnla);
+                                        // TODO: Send ICMPv6 error
+                                        continue;
+                                    }
+                                    // |white| retransmit limit not reached
+                                    // INCOMPLETE -> INCOMPLETE, Send ICMPv6 error
+                                    state_table.insert(
+                                        cnla,
+                                        State::Incomplete(time::Instant::now(), attempt + 1),
+                                    );
+                                    log!(
                                     "{} - Incomplete timer expired <lb>[INCOMPLETE -> INCOMPLETE]</>",
-                                    nla
+                                    cnla
                                 );
-                                self_c.send_neighbor_solicitation(*nla);
-                            }
-                        }
-                        NdCacheState::Reachable(lla, timestamp) => {
-                            // |white| timeout
-                            // REACHABLE -> STALE
-                            if timestamp.elapsed().as_secs() >= REACHABLE_TIME {
-                                (*self_c.state_table.lock().unwrap())
-                                    .insert(*nla, NdCacheState::Stale(*lla, time::Instant::now()));
-                                log!(
-                                    "{} - Reachable timer expired <lb>[REACHABLE -> STALE]</>, lla {}",
-                                    nla,
-                                    lla
-                                );
-                            }
-                        }
-                        NdCacheState::Stale(_, _) => {}
-                        NdCacheState::Delay(lla, timestamp) => {
-                            // |white| timeout
-                            // DELAY -> PROBE
-                            if timestamp.elapsed().as_secs() >= DELAY_TIME {
-                                (*self_c.state_table.lock().unwrap()).insert(
-                                    *nla,
-                                    NdCacheState::Probe(*lla, time::Instant::now(), 0),
-                                );
-                                log!(
-                                    "{} - Delay timer expired <lb>[DELAY -> PROBE]</>, lla {}",
-                                    nla,
-                                    lla
-                                );
-                                self_c.send_neighbor_solicitation_unicast(*nla, *lla);
-                            }
-                        }
-                        NdCacheState::Probe(lla, timestamp, attempt) => {
-                            if timestamp.elapsed().as_secs() >= PROBE_RETRY_TIME {
-                                // |white| timeout, retransmit limit reached
-                                // INCOMPLETE -> NONEXISTENT
-                                if *attempt == PROBE_RETRY_LIMIT {
-                                    (*self_c.state_table.lock().unwrap()).remove(nla);
-                                    log!("{} - PROBE -> NONEXISTENT", nla);
-                                    continue;
+                                    self_c.send_neighbor_solicitation_multicast(cnla);
                                 }
-                                (*self_c.state_table.lock().unwrap()).insert(
-                                    *nla,
-                                    NdCacheState::Probe(*lla, time::Instant::now(), attempt + 1),
-                                );
-                                log!("{} - Probe timer expired <lb>[PROBE -> PROBE]</>", nla);
-                                self_c.send_neighbor_solicitation_unicast(*nla, *lla);
+                            }
+                            State::Reachable(clla, timestamp) => {
+                                // |white| timeout
+                                // REACHABLE -> STALE
+                                if timestamp.elapsed().as_secs() >= ND_CACHE__REACHABLE_TIME {
+                                    state_table.insert(cnla, State::Stale(clla));
+                                    log!(
+                                        "{} - Reachable timer expired <lb>[REACHABLE -> STALE]</>, lla {}",
+                                        cnla,
+                                        clla
+                                    );
+                                }
+                            }
+                            State::Stale(..) => (),
+                            State::Delay(clla, timestamp) => {
+                                // |white| timeout
+                                // DELAY -> PROBE
+                                if timestamp.elapsed().as_secs() >= ND_CACHE__DELAY_TIME {
+                                    state_table
+                                        .insert(cnla, State::Probe(clla, time::Instant::now(), 0));
+                                    log!(
+                                        "{} - Delay timer expired <lb>[DELAY -> PROBE]</>, lla {}",
+                                        cnla,
+                                        clla
+                                    );
+                                    self_c.send_neighbor_solicitation_unicast(cnla, clla);
+                                }
+                            }
+                            State::Probe(clla, timestamp, attempt) => {
+                                if timestamp.elapsed().as_secs() >= ND_CACHE__PROBE_RETRY_TIME {
+                                    // |white| retransmit limit reached
+                                    // PROBE -> NONEXISTENT
+                                    if attempt >= ND_CACHE__PROBE_RETRY_LIMIT {
+                                        state_table.remove(&cnla);
+                                        log!("{} - Probe retry limit reached <lb>[PROBE -> NONEXISTENT]</>", cnla);
+                                        continue;
+                                    }
+                                    // |white| retransmit limit not reached
+                                    // PROBE -> PROBE
+                                    state_table.insert(
+                                        cnla,
+                                        State::Probe(clla, time::Instant::now(), attempt + 1),
+                                    );
+                                    log!(
+                                        "{} - Probe timer expired <lb>[PROBE -> PROBE], lla {}</>",
+                                        cnla,
+                                        clla
+                                    );
+                                    self_c.send_neighbor_solicitation_unicast(cnla, clla);
+                                }
                             }
                         }
                     }
                 }
-                thread::sleep(time::Duration::from_millis(250));
+                thread::sleep(time::Duration::from_millis(ND_CACHE__TIME_LOOP_DELAY));
             }
         });
 
@@ -171,375 +180,305 @@ impl NdCache {
 
     /// Find cache entry for given IPv6 address
     pub fn find(&self, nla: &Ip6Address) -> Option<MacAddress> {
-        if let Some(state) = (*self.state_table.lock().unwrap()).get(nla) {
-            match state {
-                NdCacheState::Incomplete(_, _) => return None,
-                NdCacheState::Reachable(lla, _) => return Some(*lla),
-                NdCacheState::Stale(lla, _) => {
-                    // |white| sending packet
-                    (*self.state_table.lock().unwrap())
-                        .insert(*nla, NdCacheState::Delay(*lla, time::Instant::now()));
-                    log!(
-                        "{} - Internal query <lb>[STALE -> DELAY]</>, lla {}",
-                        nla,
-                        lla
-                    );
-                    return Some(*lla);
-                }
-                NdCacheState::Delay(lla, _) => return Some(*lla),
-                NdCacheState::Probe(lla, _, _) => return Some(*lla),
+        // TODO: Some optimalization of time when state_table is locked needed here
+        let state_table = &mut *self.state_table.lock().unwrap();
+        match state_table.get(nla) {
+            // |white| packet to be sent out
+            // NONEXTISTENT -> INCOMPLETE, send out multicast NS
+            None => {
+                state_table.insert(*nla, State::Incomplete(time::Instant::now(), 0));
+                log!(
+                    "{} - Internal query <lb>[NONEXISTENT -> INCOMPLETE]</>",
+                    nla
+                );
+                self.send_neighbor_solicitation_multicast(*nla);
+                None
             }
+            Some(State::Incomplete(..)) => None,
+            Some(State::Reachable(clla, ..)) => Some(*clla),
+            Some(State::Stale(clla, ..)) => Some(*clla),
+            Some(State::Delay(clla, ..)) => Some(*clla),
+            Some(State::Probe(clla, ..)) => Some(*clla),
         }
-
-        // No state exists in state table for given IPv6 address
-        (*self.state_table.lock().unwrap())
-            .insert(*nla, NdCacheState::Incomplete(time::Instant::now(), 0));
-        log!(
-            "{} - Internal query <lb>[NONEXISTENT -> INCOMPLETE]</>",
-            nla
-        );
-        self.send_neighbor_solicitation(*nla);
-
-        None
     }
 
-    /// Report upper layer reachability confirmation
-    pub fn report_reachability(&self, nla_rx: Ip6Address) {
-        if let Some(state) = (*self.state_table.lock().unwrap()).get(&nla_rx) {
-            match state {
-                NdCacheState::Incomplete(_, _) => {}
-                NdCacheState::Reachable(_, _) => {}
-                NdCacheState::Stale(lla, _) => {
-                    // |blue| upper-layer reachability confirmation
-                    // STALE -> REACHABLE
-                    (*self.state_table.lock().unwrap())
-                        .insert(nla_rx, NdCacheState::Reachable(*lla, time::Instant::now()));
-                    log!(
-                        "{} - Reachability reported <lb>[STALE -> REACHABLE]</>, lla {}",
-                        nla_rx,
-                        lla
-                    );
-                }
-                NdCacheState::Delay(_, _) => {}
-                NdCacheState::Probe(_, _, _) => {}
-            }
+    /// Report upper layer inbound activity (reachability confirmation)
+    pub fn report_inbound_activity(&self, nla: Ip6Address) {
+        let state_table = &mut *self.state_table.lock().unwrap();
+        // |blue| upper-layer inbound activity
+        // STALE -> REACHABLE
+        if let Some(State::Stale(clla, ..)) = state_table.get(&nla) {
+            let clla = *clla;
+            state_table.insert(nla, State::Reachable(clla, time::Instant::now()));
+            log!(
+                "{} - Reachability reported <lb>[STALE -> REACHABLE]</>, lla {}",
+                nla,
+                clla
+            );
         }
     }
 
     /// Report upper layer packet being sent towards nla
-    pub fn report_activity(&self, nla_tx: Ip6Address) {
-        if let Some(state) = (*self.state_table.lock().unwrap()).get(&nla_tx) {
-            match state {
-                NdCacheState::Incomplete(_, _) => {}
-                NdCacheState::Reachable(_, _) => {}
-                NdCacheState::Stale(lla, _) => {
-                    (*self.state_table.lock().unwrap())
-                        .insert(nla_tx, NdCacheState::Delay(*lla, time::Instant::now()));
-                    log!(
-                        "{} - Activity reported <lb>[STALE -> DELAY]</>, lla {}",
-                        nla_tx,
-                        lla
-                    );
-                }
-                NdCacheState::Delay(_, _) => {}
-                NdCacheState::Probe(_, _, _) => {}
-            }
+    pub fn report_outbound_activity(&self, nla: Ip6Address) {
+        let state_table = &mut *self.state_table.lock().unwrap();
+        // |white| upper-layer outbound activity
+        // STALE -> DELAY
+        if let Some(State::Stale(clla, ..)) = state_table.get(&nla) {
+            let clla = *clla;
+            state_table.insert(nla, State::Delay(clla, time::Instant::now()));
+            log!(
+                "{} - Activity reported <lb>[STALE -> DELAY]</>, lla {}",
+                nla,
+                clla
+            );
         }
     }
 
     /// Report inbound Network Solicitation message
     pub fn report_ns(&self, ip6_rx: &ip6::Ip6, icmp6_rx: &icmp6_nd::NeighborSolicitation) {
-        let nla_rx = ip6_rx.get_src();
-        if let Some(lla_rx) = icmp6_rx.get_slla() {
-            if let Some(state) = (*self.state_table.lock().unwrap()).get(&nla_rx) {
-                match state {
-                    NdCacheState::Incomplete(_, _) => {
-                        (*self.state_table.lock().unwrap())
-                            .insert(nla_rx, NdCacheState::Stale(lla_rx, time::Instant::now()));
-                        log!(
-                            "{} - Received NS message <lb>[INCOMPLETE -> STALE]</>, lla {}",
-                            nla_rx,
-                            lla_rx
-                        );
-                        // TODO: Send queued packets
-                    }
-                    NdCacheState::Reachable(lla, _) => {
-                        // |general| received NS[different lla]
-                        // REACHABLE -> STALE, record lla
-                        if lla_rx != *lla {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(*lla, time::Instant::now()));
-                            log!(
-                                "{} - Received NS message <lb>[REACHABLE -> STALE]</>, lla {} -> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                    }
-                    NdCacheState::Stale(lla, _) => {
-                        // |general| received NS[different lla]
-                        // STALE -> STALE, record lla
-                        if lla_rx != *lla {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(*lla, time::Instant::now()));
-                            log!(
-                                "{} - Received NS message <lb>[STALE -> STALE]</>, lla {} -> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                    }
-                    NdCacheState::Delay(lla, _) => {
-                        // |general| received NS[different lla]
-                        // DELAY -> STALE, record lla
-                        if lla_rx != *lla {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(*lla, time::Instant::now()));
-                            log!(
-                                "{} - Received NS message <lb>[DELAY -> STALE]</>, lla {} -> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                    }
-                    NdCacheState::Probe(lla, _, _) => {
-                        // |general| received NS[different lla]
-                        // PROBE -> STALE, record lla
-                        if lla_rx != *lla {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(*lla, time::Instant::now()));
-                            log!(
-                                "{} - Received NS message <lb>[PROBE -> STALE]</>, lla {} -> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                    }
-                }
-            }
+        // Ignore NS packet without SLLA option
+        if icmp6_rx.get_slla() == None {
+            return;
         }
-        // NS received
-        // NONEXISTENT -> STALE
-        if let Some(lla_rx) = icmp6_rx.get_slla() {
-            (*self.state_table.lock().unwrap())
-                .insert(nla_rx, NdCacheState::Stale(lla_rx, time::Instant::now()));
-            log!(
-                "{} - Received NS message <lb>[NONEXISTENT -> STALE]</>, lla {}",
-                nla_rx,
-                lla_rx
-            );
+        let lla = icmp6_rx.get_slla().unwrap();
+        let nla = ip6_rx.get_src();
+        let state_table = &mut *self.state_table.lock().unwrap();
+        match state_table.get(&nla) {
+            // |white} received NS[]
+            // NONEXISTENT -> STALE
+            None => {
+                state_table.insert(nla, State::Stale(lla));
+                log!(
+                    "{} - Received NS message <lb>[NONEXISTENT -> STALE]</>, lla {}",
+                    nla,
+                    lla,
+                );
+            }
+            // |general| received NS[]
+            // INCOMPLETE -> STALE, record lla
+            Some(State::Incomplete(..)) => {
+                state_table.insert(nla, State::Stale(lla));
+                log!(
+                    "{} - Received NS message <lb>[INCOMPLETE -> STALE]</>, lla {}",
+                    nla,
+                    lla,
+                );
+                // TODO: Send queued packets
+            }
+            // |general| received NS[different lla]
+            // REACHABLE -> STALE, record lla
+            Some(State::Reachable(clla, ..)) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Stale(clla));
+                log!(
+                    "{} - Received NS message <lb>[REACHABLE -> STALE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |general| received NS[different lla]
+            // STALE -> STALE, record lla
+            Some(State::Stale(clla, ..)) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Stale(clla));
+                log!(
+                    "{} - Received NS message <lb>[STALE -> STALE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |general| received NS[different lla]
+            // DELAY -> STALE, record lla
+            Some(State::Delay(clla, ..)) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Stale(clla));
+                log!(
+                    "{} - Received NS message <lb>[DELAY -> STALE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |general| received NS[different lla]
+            // PROBE -> STALE, record lla
+            Some(State::Probe(clla, ..)) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Stale(clla));
+                log!(
+                    "{} - Received NS message <lb>[PROBE -> STALE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            _ => (),
         }
     }
 
     /// Report receiving Neighbor Advertisement message
     pub fn report_na(&self, icmp6_rx: &icmp6_nd::NeighborAdvertisement) {
-        if let Some(lla_rx) = icmp6_rx.get_tlla() {
-            let nla_rx = icmp6_rx.get_tnla();
-            if let Some(state) = (*self.state_table.lock().unwrap()).get(&nla_rx) {
-                match state {
-                    NdCacheState::Incomplete(_, _) => {
-                        // |blue| received NA[S=1, O=any]
-                        // INCOMPLETE -> REACHABLE, record lla, send queued packets
-                        if icmp6_rx.get_flag_s() {
-                            (*self.state_table.lock().unwrap()).insert(
-                                nla_rx,
-                                NdCacheState::Reachable(lla_rx, time::Instant::now()),
-                            );
-                            log!(
-                                "{} - Received NA message <lb>[INCOMPLETE -> REACHABLE]</>, lla {}",
-                                nla_rx,
-                                lla_rx
-                            );
-                            // TODO: Send queued packets
-                        }
-                        // |red| received NA[S=0, O=any]
-                        // INCOMPLETE -> STALE, record lla, send queued packets
-                        if !icmp6_rx.get_flag_s() {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(lla_rx, time::Instant::now()));
-                            log!(
-                                "{} - Received NA message <lb>[INCOMPLETE -> STALE]</>, lla {}",
-                                nla_rx,
-                                lla_rx
-                            );
-                            // TODO: Send queued packets
-                        }
-                    }
-                    NdCacheState::Reachable(lla, _) => {
-                        // |yellow| received NA[S=1, O=0, lla different]
-                        // REACHABLE -> STALE, ignore lla
-                        if icmp6_rx.get_flag_s() && !icmp6_rx.get_flag_o() && lla_rx != *lla {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(*lla, time::Instant::now()));
-                            log!(
-                                "{} - Received NA message <lb>[REACHABLE -> STALE]</>, lla {} -/> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                        // |red| received NA[S=0, O=1, lla different]
-                        // REACHABLE -> STALE, record lla
-                        if !icmp6_rx.get_flag_s() && icmp6_rx.get_flag_o() && lla_rx != *lla {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(lla_rx, time::Instant::now()));
-                            log!(
-                                "{} -  Received NA message <lb>[REACHABLE -> STALE]</>, lla {} -> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                    }
-                    NdCacheState::Stale(lla, _) => {
-                        // |blue| received NA[S=1, O=1] (checking lla for logging)
-                        // STALE -> REACHABLE, record lla if different
-                        if icmp6_rx.get_flag_s() && icmp6_rx.get_flag_o() {
-                            (*self.state_table.lock().unwrap()).insert(
-                                nla_rx,
-                                NdCacheState::Reachable(lla_rx, time::Instant::now()),
-                            );
-                            if lla_rx == *lla {
-                                log!(
-                                    "{} - Received NA message <lb>[STALE -> REACHABLE]</>, lla {}",
-                                    nla_rx,
-                                    lla
-                                );
-                            } else {
-                                log!(
-                                    "{} - Received NA message <lb>[STALE -> REACHABLE]</>, lla {} -> {}",
-                                    nla_rx,
-                                    lla,
-                                    lla_rx
-                                );
-                            }
-                        }
-                        // |yellow| received NA[S=1, O=0, different lla]
-                        // STALE->STALE, ignore lla
-                        if icmp6_rx.get_flag_s() && !icmp6_rx.get_flag_o() && lla_rx != *lla {
-                            (*self.state_table.lock().unwrap()).insert(
-                                nla_rx,
-                                NdCacheState::Reachable(*lla, time::Instant::now()),
-                            );
-                            log!(
-                                "{} - Received NA message <lb>[STALE -> STALE]</>, lla {} -/> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                    }
-                    NdCacheState::Delay(lla, _) => {
-                        // |blue| received NA[S=1, O=1] (checking lla for logging)
-                        // DELAY -> REACHABLE, record lla if different
-                        if icmp6_rx.get_flag_s() && icmp6_rx.get_flag_o() {
-                            (*self.state_table.lock().unwrap()).insert(
-                                nla_rx,
-                                NdCacheState::Reachable(lla_rx, time::Instant::now()),
-                            );
-                            if lla_rx == *lla {
-                                log!(
-                                    "{} - Received NA message <lb>[DELAY -> REACHABLE]</>, lla {}",
-                                    nla_rx,
-                                    lla
-                                );
-                            } else {
-                                log!(
-                                    "{} - Received NA message <lb>[DELAY -> REACHABLE]</>, lla {} -> {}",
-                                    nla_rx,
-                                    lla,
-                                    lla_rx
-                                );
-                            }
-                        }
-                        // |yellow| received NA[S=1, O=0, different lla]
-                        // DELAY -> DELAY, ignore lla
-                        if icmp6_rx.get_flag_s() && !icmp6_rx.get_flag_o() && lla_rx != *lla {
-                            (*self.state_table.lock().unwrap()).insert(
-                                nla_rx,
-                                NdCacheState::Reachable(*lla, time::Instant::now()),
-                            );
-                            log!(
-                                "{} - Received NA message <lb>[DELAY -> DELAY]</>, lla {} -/> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                        // |red| received NA[S=0, O=1, different lla]
-                        // DELAY -> STALE, record lla
-                        if !icmp6_rx.get_flag_s() && icmp6_rx.get_flag_o() && lla_rx != *lla {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(lla_rx, time::Instant::now()));
-                            log!(
-                                "{} - Received NA message <lb>[DELAY -> STALE]</>, lla {} -> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                    }
-                    NdCacheState::Probe(lla, _, _) => {
-                        // |blue| received NA[S=1, O=1] (checking lla for logging)
-                        // PROBE -> REACHABLE, record lla if different
-                        if icmp6_rx.get_flag_s() && icmp6_rx.get_flag_o() {
-                            (*self.state_table.lock().unwrap()).insert(
-                                nla_rx,
-                                NdCacheState::Reachable(lla_rx, time::Instant::now()),
-                            );
-                            if lla_rx == *lla {
-                                log!(
-                                    "{} - Received NA message <lb>[PROBE -> REACHABLE]</>, lla {}",
-                                    nla_rx,
-                                    lla
-                                );
-                            } else {
-                                log!(
-                                    "{} - Received NA message <lb>[PROBE -> REACHABLE]</>, lla {} -> {}",
-                                    nla_rx,
-                                    lla,
-                                    lla_rx
-                                );
-                            }
-                        }
-                        // |yellow| received NA[S=1, O=0, different lla]
-                        // PROBE -> DELAY, ignore lla
-                        if icmp6_rx.get_flag_s() && !icmp6_rx.get_flag_o() && lla_rx != *lla {
-                            (*self.state_table.lock().unwrap()).insert(
-                                nla_rx,
-                                NdCacheState::Reachable(*lla, time::Instant::now()),
-                            );
-                            log!(
-                                "{} - Received NA message <lb>[PROBE -> DELAY]</>, lla {} -/> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                        // |red| received NA[S=0, O=1, different lla]
-                        // PROBE -> STALE, record lla
-                        if !icmp6_rx.get_flag_s() && icmp6_rx.get_flag_o() && lla_rx != *lla {
-                            (*self.state_table.lock().unwrap())
-                                .insert(nla_rx, NdCacheState::Stale(lla_rx, time::Instant::now()));
-                            log!(
-                                "{} - Received NA message <lb>[PROBE -> STALE]</>, lla {} -> {}",
-                                nla_rx,
-                                lla,
-                                lla_rx
-                            );
-                        }
-                    }
-                }
+        // Ignore NA packet without TLLA option
+        if icmp6_rx.get_tlla() == None {
+            return;
+        }
+        let lla = icmp6_rx.get_tlla().unwrap();
+        let nla = icmp6_rx.get_tnla();
+        let state_table = &mut *self.state_table.lock().unwrap();
+        match (
+            state_table.get(&nla),
+            icmp6_rx.get_flag_s(),
+            icmp6_rx.get_flag_o(),
+        ) {
+            // |blue| received NA[S=1, O=any]
+            // INCOMPLETE -> REACHABLE, record lla, send queued packets
+            (Some(State::Incomplete(..)), true, _) => {
+                state_table.insert(nla, State::Reachable(lla, time::Instant::now()));
+                log!(
+                    "{} - Received NA message <lb>[INCOMPLETE -> REACHABLE]</>, lla {}",
+                    nla,
+                    lla,
+                );
+                // TODO: Send queued packets
             }
+            // |red| received NA[S=0, O=any]
+            // INCOMPLETE -> STALE, record lla, send queued packets
+            (Some(State::Incomplete(..)), false, _) => {
+                state_table.insert(nla, State::Stale(lla));
+                log!(
+                    "{} - Received NA message <lb>[INCOMPLETE -> STALE]</>, lla {}",
+                    nla,
+                    lla,
+                );
+                // TODO: Send queued packets
+            }
+            // |yellow| received NA[S=1, O=0, lla different]
+            // REACHABLE -> STALE, ignore lla
+            (Some(State::Reachable(clla, ..)), true, false) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Stale(clla));
+                log!(
+                    "{} - Received NA message <lb>[REACHABLE -> STALE]</>, lla {} -/> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |red| received NA[S=0, O=1, lla different]
+            // REACHABLE -> STALE, record lla
+            (Some(State::Reachable(clla, ..)), false, true) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Stale(lla));
+                log!(
+                    "{} -  Received NA message <lb>[REACHABLE -> STALE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |blue| received NA[S=1, O=1]
+            // STALE -> REACHABLE, record lla if different
+            (Some(State::Stale(clla, ..)), true, true) => {
+                let clla = *clla;
+                state_table.insert(nla, State::Reachable(lla, time::Instant::now()));
+                log!(
+                    "{} - Received NA message <lb>[STALE -> REACHABLE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |yellow| received NA[S=1, O=0, different lla]
+            // STALE->STALE, ignore lla
+            (Some(State::Stale(clla, ..)), true, false) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Reachable(clla, time::Instant::now()));
+                log!(
+                    "{} - Received NA message <lb>[STALE -> STALE]</>, lla {} -/> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |blue| received NA[S=1, O=1]
+            // DELAY -> REACHABLE, record lla if different
+            (Some(State::Delay(clla, ..)), true, true) => {
+                let clla = *clla;
+                state_table.insert(nla, State::Reachable(lla, time::Instant::now()));
+                log!(
+                    "{} - Received NA message <lb>[DELAY -> REACHABLE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |yellow| received NA[S=1, O=0, different lla]
+            // DELAY -> DELAY, ignore lla
+            (Some(State::Delay(clla, ..)), true, false) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Reachable(clla, time::Instant::now()));
+                log!(
+                    "{} - Received NA message <lb>[DELAY -> DELAY]</>, lla {} -/> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |red| received NA[S=0, O=1, different lla]
+            // DELAY -> STALE, record lla
+            (Some(State::Delay(clla, ..)), false, true) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Stale(lla));
+                log!(
+                    "{} - Received NA message <lb>[DELAY -> STALE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla
+                );
+            }
+            // |blue| received NA[S=1, O=1]
+            // PROBE -> REACHABLE, record lla if different
+            (Some(State::Probe(clla, ..)), true, true) => {
+                let clla = *clla;
+                state_table.insert(nla, State::Reachable(lla, time::Instant::now()));
+                log!(
+                    "{} - Received NA message <lb>[PROBE -> REACHABLE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |yellow| received NA[S=1, O=0, different lla]
+            // PROBE -> DELAY, ignore lla
+            (Some(State::Probe(clla, ..)), true, false) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Reachable(clla, time::Instant::now()));
+                log!(
+                    "{} - Received NA message <lb>[PROBE -> DELAY]</>, lla {} -/> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            // |red| received NA[S=0, O=1, different lla]
+            // PROBE -> STALE, record lla
+            (Some(State::Probe(clla, ..)), false, true) if *clla != lla => {
+                let clla = *clla;
+                state_table.insert(nla, State::Stale(lla));
+                log!(
+                    "{} - Received NA message <lb>[PROBE -> STALE]</>, lla {} -> {}",
+                    nla,
+                    clla,
+                    lla,
+                );
+            }
+            _ => (),
         }
     }
 
-    /// Send Neighbor Solicitation message
-    fn send_neighbor_solicitation(&self, nla: Ip6Address) {
+    /// Send Neighbor Solicitation message (multicast version)
+    fn send_neighbor_solicitation_multicast(&self, nla: Ip6Address) {
         let tracker = {
             let mut packet_sn = self.packet_sn.lock().unwrap();
             let tracker = format!(
