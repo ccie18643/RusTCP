@@ -23,27 +23,10 @@
 ############################################################################
 */
 
-mod config;
-mod lib;
-mod protocols;
-mod subsystems;
-
-use std::thread;
-use std::time::Duration;
-
-use crate::subsystems::packet_handler;
-
-fn main() {
-    log_stack!(
-        "<B>RusTCP</> - TCP/IP Stack written in <r>Rust</>, 2021 <B><y>Sebastian Majewski</>"
-    );
-
-    packet_handler::PacketHandler::new(7, 1514, "02:00:00:77:77:77".into())
-        .set_ip6_address("fe80::7/64".into())
-        .set_ip6_address("2007::7/64".into())
-        .run();
-
-    loop {
-        thread::sleep(Duration::from_millis(1000));
-    }
-}
+pub const ND_CACHE__INCOMPLETE_RETRY_TIME: u64 = 1;
+pub const ND_CACHE__INCOMPLETE_RETRY_LIMIT: usize = 2;
+pub const ND_CACHE__REACHABLE_TIME: u64 = 45;
+pub const ND_CACHE__DELAY_TIME: u64 = 5;
+pub const ND_CACHE__PROBE_RETRY_TIME: u64 = 1;
+pub const ND_CACHE__PROBE_RETRY_LIMIT: usize = 2;
+pub const ND_CACHE__TIME_LOOP_DELAY: u64 = 100;
