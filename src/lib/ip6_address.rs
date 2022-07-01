@@ -106,11 +106,11 @@ fn u128_to_ip6_str(address: u128, mask: u128) -> Result<String, errors::NonConti
     ip6_str.remove(0);
 
     if ip6_str.starts_with(':') {
-        ip6_str = format!(":{}", ip6_str);
+        ip6_str = format!(":{ip6_str}");
     }
 
     if ip6_str.ends_with(':') {
-        ip6_str = format!("{}:", ip6_str);
+        ip6_str = format!("{ip6_str}:");
     }
 
     if ip6_str.is_empty() {
@@ -124,7 +124,7 @@ fn u128_to_ip6_str(address: u128, mask: u128) -> Result<String, errors::NonConti
     let prefix_len = mask.leading_ones();
 
     if prefix_len < 128 {
-        ip6_str = format!("{}/{}", ip6_str, prefix_len);
+        ip6_str = format!("{ip6_str}/{prefix_len}");
     }
 
     Ok(ip6_str)

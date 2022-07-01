@@ -289,7 +289,7 @@ impl Logger<'_> {
             for (style, term) in self.styles.iter() {
                 message = message.replace(style, term);
             }
-            println!("{}", message);
+            println!("{message}");
         }
     }
 }

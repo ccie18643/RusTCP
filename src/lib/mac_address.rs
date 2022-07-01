@@ -57,7 +57,7 @@ fn u64_to_mac_str(address: u64) -> String {
 
     let mut mac_str = String::with_capacity(19);
     for byte in &bytes[2..8] {
-        mac_str.push_str(&format!("{:02x}:", byte));
+        mac_str.push_str(&format!("{byte:02x}:"));
     }
     mac_str.pop();
     mac_str
