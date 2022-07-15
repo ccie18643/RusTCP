@@ -247,8 +247,8 @@ impl Logger<'_> {
         Logger {
             styles: [
                 ("</>", "\x1b[0m"),
-                ("<WARN>", "\x1b[1m\x1b[93m"),
                 ("<CRIT>", "\x1b[1m\x1b[41m"),
+                ("<WARN>", "\x1b[1m\x1b[93m"),
                 ("<INFO>", "\x1b[1m"),
                 ("<B>", "\x1b[1m"),
                 ("<I>", "\x1b[3m"),
@@ -289,7 +289,7 @@ impl Logger<'_> {
             for (style, term) in self.styles.iter() {
                 message = message.replace(style, term);
             }
-            println!("{message}");
+            println!("{}", message);
         }
     }
 }
