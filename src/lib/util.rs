@@ -49,7 +49,7 @@ pub fn tracker(tag: &str, nic_name: &str, packet_sn: &mut usize) -> String {
 
 /// Select IPv6 packet source address based on it's destination
 pub fn ip6_select_src(
-    dst: &Ip6Address,
+    dst: Ip6Address,
     ip6_address_tx: &Arc<Mutex<HashSet<Ip6Address>>>,
 ) -> Option<Ip6Address> {
     for address in (*ip6_address_tx.lock().unwrap()).iter() {
