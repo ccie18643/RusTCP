@@ -23,11 +23,11 @@
 ############################################################################
 */
 
-pub mod errors;
 pub mod ip6_address;
 pub mod ip6_routing_table;
 pub mod logger;
 pub mod mac_address;
+pub mod macros;
 pub mod packet;
 pub mod tap_io;
 pub mod util;
