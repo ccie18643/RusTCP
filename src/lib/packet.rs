@@ -27,6 +27,7 @@ use crate::protocols::ether;
 use crate::protocols::icmp6;
 use crate::protocols::icmp6_nd;
 use crate::protocols::ip6;
+use crate::protocols::protocol::Protocol;
 
 /// Enum containing all protocols supported by stack
 pub enum ProtoKind {
@@ -38,10 +39,12 @@ pub enum ProtoKind {
 
 /// Enum containing the various types of ICMPv6 messages
 pub enum Icmp6Kind {
-    NeighborSolicitation(icmp6_nd::NeighborSolicitation),
-    NeighborAdvertisement(icmp6_nd::NeighborAdvertisement),
     EchoRequest(icmp6::EchoRequest),
     EchoReply(icmp6::EchoReply),
+    RouterSolicitation(icmp6_nd::RouterSolicitation),
+    RouterAdvertisement(icmp6_nd::RouterAdvertisement),
+    NeighborSolicitation(icmp6_nd::NeighborSolicitation),
+    NeighborAdvertisement(icmp6_nd::NeighborAdvertisement),
     Unknown,
 }
 
@@ -57,8 +60,8 @@ pub struct Packet {
 
 impl Packet {
     /// Constructor
-    pub fn new(frame: Vec<u8>, tracker: String) -> Packet {
-        Packet {
+    pub fn new(frame: Vec<u8>, tracker: String) -> Self {
+        Self {
             frame,
             tracker,
             protocols: Vec::new(),
@@ -88,6 +91,12 @@ impl Packet {
                 ProtoKind::Icmp6(Icmp6Kind::EchoReply(message)) => {
                     message.assemble(&mut self.frame);
                 }
+                ProtoKind::Icmp6(Icmp6Kind::RouterSolicitation(message)) => {
+                    message.assemble(&mut self.frame);
+                }
+                ProtoKind::Icmp6(Icmp6Kind::RouterAdvertisement(message)) => {
+                    message.assemble(&mut self.frame);
+                }
                 ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(message)) => {
                     message.assemble(&mut self.frame);
                 }
@@ -100,7 +109,7 @@ impl Packet {
     }
 
     /// Add protocol header to the protocol stack
-    pub fn add_protocol(mut self, mut protocol: ProtoKind) -> Packet {
+    pub fn add_protocol(mut self, mut protocol: ProtoKind) -> Self {
         match protocol {
             ProtoKind::Ip6(ref header) => {
                 self.phdr = header.phdr();
@@ -109,6 +118,12 @@ impl Packet {
                 message.phdr(self.phdr.clone());
             }
             ProtoKind::Icmp6(Icmp6Kind::EchoReply(ref mut message)) => {
+                message.phdr(self.phdr.clone());
+            }
+            ProtoKind::Icmp6(Icmp6Kind::RouterSolicitation(ref mut message)) => {
+                message.phdr(self.phdr.clone());
+            }
+            ProtoKind::Icmp6(Icmp6Kind::RouterAdvertisement(ref mut message)) => {
                 message.phdr(self.phdr.clone());
             }
             ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(ref mut message)) => {
@@ -148,26 +163,6 @@ impl Packet {
         None
     }
 
-    /// Get the ICMPv6 Neighbor Solicitation message if present in the 'protocols' array
-    pub fn icmp6_neighbor_solicitation(&self) -> Option<&icmp6_nd::NeighborSolicitation> {
-        for protocol in self.protocols.iter() {
-            if let ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(message)) = protocol {
-                return Some(message);
-            }
-        }
-        None
-    }
-
-    /// Get the ICMPv6 Neighbor Advertisement message if present in the 'protocols' array
-    pub fn icmp6_neighbor_advertisement(&self) -> Option<&icmp6_nd::NeighborAdvertisement> {
-        for protocol in self.protocols.iter() {
-            if let ProtoKind::Icmp6(Icmp6Kind::NeighborAdvertisement(message)) = protocol {
-                return Some(message);
-            }
-        }
-        None
-    }
-
     /// Get the ICMPv6 Echo Request message if present in the 'protocols' array
     pub fn icmp6_echo_request(&self) -> Option<&icmp6::EchoRequest> {
         for protocol in self.protocols.iter() {
@@ -188,9 +183,49 @@ impl Packet {
         None
     }
 
+    /// Get the ICMPv6 Router Solicitation message if present in the 'protocols' array
+    pub fn icmp6_router_solicitation(&self) -> Option<&icmp6_nd::RouterSolicitation> {
+        for protocol in self.protocols.iter() {
+            if let ProtoKind::Icmp6(Icmp6Kind::RouterSolicitation(message)) = protocol {
+                return Some(message);
+            }
+        }
+        None
+    }
+
+    /// Get the ICMPv6 Router Advertisement message if present in the 'protocols' array
+    pub fn icmp6_router_advertisement(&self) -> Option<&icmp6_nd::RouterAdvertisement> {
+        for protocol in self.protocols.iter() {
+            if let ProtoKind::Icmp6(Icmp6Kind::RouterAdvertisement(message)) = protocol {
+                return Some(message);
+            }
+        }
+        None
+    }
+
+    /// Get the ICMPv6 Neighbor Solicitation message if present in the 'protocols' array
+    pub fn icmp6_neighbor_solicitation(&self) -> Option<&icmp6_nd::NeighborSolicitation> {
+        for protocol in self.protocols.iter() {
+            if let ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(message)) = protocol {
+                return Some(message);
+            }
+        }
+        None
+    }
+
+    /// Get the ICMPv6 Neighbor Advertisement message if present in the 'protocols' array
+    pub fn icmp6_neighbor_advertisement(&self) -> Option<&icmp6_nd::NeighborAdvertisement> {
+        for protocol in self.protocols.iter() {
+            if let ProtoKind::Icmp6(Icmp6Kind::NeighborAdvertisement(message)) = protocol {
+                return Some(message);
+            }
+        }
+        None
+    }
+
     /// Parse Ethernet header
     fn parse_ether(&mut self) {
-        let ether = ether::Ether::new().parse(&self.frame[self.data_offset..]);
+        let ether = ether::Ether::from(&self.frame[self.data_offset..]);
         let ether_type = ether.get_type();
         self.data_offset += ether.len();
         self.protocols.push(ProtoKind::Ether(ether));
@@ -202,7 +237,7 @@ impl Packet {
 
     /// Parse IPv6 header
     fn parse_ip6(&mut self) {
-        let ip6 = ip6::Ip6::new().parse(&self.frame[self.data_offset..]);
+        let ip6 = ip6::Ip6::from(&self.frame[self.data_offset..]);
         let ip6_next = ip6.get_next();
         self.data_offset += ip6.len();
         self.protocols.push(ProtoKind::Ip6(ip6));
@@ -215,31 +250,41 @@ impl Packet {
     /// Parse ICMPv6 message
     fn parse_icmp6(&mut self) {
         match self.frame[self.data_offset] {
-            icmp6_nd::NEIGHBOR_SOLICITATION__TYPE => {
-                let icmp6 =
-                    icmp6_nd::NeighborSolicitation::new().parse(&self.frame[self.data_offset..]);
-                self.data_offset += icmp6.len();
-                self.protocols
-                    .push(ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(icmp6)));
-            }
-            icmp6_nd::NEIGHBOR_ADVERTISEMENT__TYPE => {
-                let icmp6 =
-                    icmp6_nd::NeighborAdvertisement::new().parse(&self.frame[self.data_offset..]);
-                self.data_offset += icmp6.len();
-                self.protocols
-                    .push(ProtoKind::Icmp6(Icmp6Kind::NeighborAdvertisement(icmp6)));
-            }
             icmp6::ECHO_REQUEST__TYPE => {
-                let icmp6 = icmp6::EchoRequest::new().parse(&self.frame[self.data_offset..]);
+                let icmp6 = icmp6::EchoRequest::from(&self.frame[self.data_offset..]);
                 self.data_offset += icmp6.len();
                 self.protocols
                     .push(ProtoKind::Icmp6(Icmp6Kind::EchoRequest(icmp6)));
             }
             icmp6::ECHO_REPLY__TYPE => {
-                let icmp6 = icmp6::EchoReply::new().parse(&self.frame[self.data_offset..]);
+                let icmp6 = icmp6::EchoReply::from(&self.frame[self.data_offset..]);
                 self.data_offset += icmp6.len();
                 self.protocols
                     .push(ProtoKind::Icmp6(Icmp6Kind::EchoReply(icmp6)));
+            }
+            icmp6_nd::ROUTER_SOLICITATION__TYPE => {
+                let icmp6 = icmp6_nd::RouterSolicitation::from(&self.frame[self.data_offset..]);
+                self.data_offset += icmp6.len();
+                self.protocols
+                    .push(ProtoKind::Icmp6(Icmp6Kind::RouterSolicitation(icmp6)));
+            }
+            icmp6_nd::ROUTER_ADVERTISEMENT__TYPE => {
+                let icmp6 = icmp6_nd::RouterAdvertisement::from(&self.frame[self.data_offset..]);
+                self.data_offset += icmp6.len();
+                self.protocols
+                    .push(ProtoKind::Icmp6(Icmp6Kind::RouterAdvertisement(icmp6)));
+            }
+            icmp6_nd::NEIGHBOR_SOLICITATION__TYPE => {
+                let icmp6 = icmp6_nd::NeighborSolicitation::from(&self.frame[self.data_offset..]);
+                self.data_offset += icmp6.len();
+                self.protocols
+                    .push(ProtoKind::Icmp6(Icmp6Kind::NeighborSolicitation(icmp6)));
+            }
+            icmp6_nd::NEIGHBOR_ADVERTISEMENT__TYPE => {
+                let icmp6 = icmp6_nd::NeighborAdvertisement::from(&self.frame[self.data_offset..]);
+                self.data_offset += icmp6.len();
+                self.protocols
+                    .push(ProtoKind::Icmp6(Icmp6Kind::NeighborAdvertisement(icmp6)));
             }
             _ => self.protocols.push(ProtoKind::Icmp6(Icmp6Kind::Unknown)),
         }
