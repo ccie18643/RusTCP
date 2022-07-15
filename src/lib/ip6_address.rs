@@ -23,15 +23,27 @@
 ############################################################################
 */
 
+//! IPv6 Address support library
+//!
+//! Provides abstraction over the IPv6 Address and various utility
+//! functions that operate on IPv6 Addresses.
+
 #![allow(dead_code)]
 
-use crate::lib::errors;
+use crate::lib::mac_address::MacAddress;
 use byteorder::{ByteOrder, NetworkEndian};
 use regex::Regex;
 use std::fmt;
 
+#[derive(Debug)]
+pub struct Ip6AddressParseError;
+
+#[derive(Debug)]
+pub struct Ip6NonContiguousMaskError;
+
 /// Convert IPv6 address format from string to u128
-fn ip6_str_to_u128(ip6_str: &str) -> Result<(u128, u128), errors::ParseAddressError> {
+fn ip6_str_to_u128(ip6_str: &str) -> Result<(u128, u128), Ip6AddressParseError> {
+    let ip6_str = ip6_str.trim();
     let mut bytes = [0u8; 16];
 
     let re = Regex::new(
@@ -49,7 +61,7 @@ fn ip6_str_to_u128(ip6_str: &str) -> Result<(u128, u128), errors::ParseAddressEr
     .unwrap();
 
     if !re.is_match(ip6_str) {
-        return Err(errors::ParseAddressError);
+        return Err(Ip6AddressParseError);
     }
 
     let mut split = ip6_str.split('/');
@@ -80,7 +92,7 @@ fn ip6_str_to_u128(ip6_str: &str) -> Result<(u128, u128), errors::ParseAddressEr
 }
 
 /// Convert IPv6 address format from u128 to string
-fn u128_to_ip6_str(address: u128, mask: u128) -> Result<String, errors::NonContiguousMaskError> {
+fn u128_to_ip6_str(address: u128, mask: u128) -> Result<String, Ip6NonContiguousMaskError> {
     let mut ip6_str = String::with_capacity(40);
 
     let mut bytes = [0u8; 16];
@@ -106,11 +118,11 @@ fn u128_to_ip6_str(address: u128, mask: u128) -> Result<String, errors::NonConti
     ip6_str.remove(0);
 
     if ip6_str.starts_with(':') {
-        ip6_str = format!(":{ip6_str}");
+        ip6_str = format!(":{}", ip6_str);
     }
 
     if ip6_str.ends_with(':') {
-        ip6_str = format!("{ip6_str}:");
+        ip6_str = format!("{}:", ip6_str);
     }
 
     if ip6_str.is_empty() {
@@ -118,13 +130,13 @@ fn u128_to_ip6_str(address: u128, mask: u128) -> Result<String, errors::NonConti
     }
 
     if mask.count_zeros() != mask.trailing_zeros() {
-        return Err(errors::NonContiguousMaskError);
+        return Err(Ip6NonContiguousMaskError);
     }
 
     let prefix_len = mask.leading_ones();
 
     if prefix_len < 128 {
-        ip6_str = format!("{ip6_str}/{prefix_len}");
+        ip6_str = format!("{}/{}", ip6_str, prefix_len);
     }
 
     Ok(ip6_str)
@@ -138,6 +150,29 @@ pub struct Ip6Address {
 }
 
 impl Ip6Address {
+    /// Create new IPv6 address
+    pub fn new(string: &str) -> Self {
+        string.into()
+    }
+
+    /// Create EUI64 based IPv6 address
+    pub fn eui64(prefix: Ip6Address, mac_address: MacAddress) -> Self {
+        assert!(prefix.address & 0x0000_0000_0000_0000_ffff_ffff_ffff_ffff == 0);
+        assert!(prefix.mask == 0xffff_ffff_ffff_ffff_0000_0000_0000_0000);
+
+        let mac64: u64 = mac_address.into();
+        let mut address = ((mac64 & 0x00_00_ff_ff_ff_00_00_00) << 16) as u128;
+        address |= (mac64 & 0x00_00_00_00_00_ff_ff_ff) as u128;
+        address |= 0x00_00_00_ff_fe_00_00_00_u128;
+        address ^= 0x02_00_00_00_00_00_00_00_u128;
+        address |= prefix.address;
+
+        Self {
+            address,
+            mask: prefix.mask,
+        }
+    }
+
     /// Convert IPv6 address to array of bytes
     pub fn to_bytes(self) -> [u8; 16] {
         let mut bytes = [0u8; 16];
@@ -146,23 +181,23 @@ impl Ip6Address {
     }
 
     /// Convert to host address
-    pub fn host(&self) -> Ip6Address {
-        Ip6Address {
+    pub fn host(&self) -> Self {
+        Self {
             address: self.address,
             mask: 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
         }
     }
 
     /// Convert to network address
-    pub fn network(&self) -> Ip6Address {
-        Ip6Address {
+    pub fn network(&self) -> Self {
+        Self {
             address: self.address & self.mask,
             mask: self.mask,
         }
     }
 
     /// Check if provided address is part of this network
-    pub fn contains(&self, other: &Ip6Address) -> bool {
+    pub fn contains(&self, other: Self) -> bool {
         self.address & self.mask == other.address & self.mask
     }
 
@@ -213,26 +248,29 @@ impl Ip6Address {
     }
 
     /// Create coresponding Solicited Node Multicast address
-    pub fn solicited_node_multicast(&self) -> Ip6Address {
-        Ip6Address {
+    pub fn solicited_node_multicast(&self) -> Self {
+        Self {
             address: self.address & 0x0000_0000_0000_0000_0000_0000_00ff_ffff
                 | 0xff02_0000_0000_0000_0000_0001_ff00_0000,
             mask: 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
         }
     }
-}
 
-/// Convert IPv6 address into u128
-impl From<Ip6Address> for u128 {
-    fn from(ip6_address: Ip6Address) -> u128 {
-        ip6_address.address
+    /// Get the prefix length
+    pub fn get_prefix_len(&self) -> u8 {
+        self.mask.leading_ones() as u8
+    }
+
+    /// Set prefix lenght
+    pub fn set_prefix_len(&mut self, prefix_len: u8) {
+        self.mask = u128::MAX.checked_shl(128 - prefix_len as u32).unwrap_or(0);
     }
 }
 
 /// Convert slice of bytes into IPv6 Address
 impl From<&[u8]> for Ip6Address {
-    fn from(bytes: &[u8]) -> Ip6Address {
-        Ip6Address {
+    fn from(bytes: &[u8]) -> Self {
+        Self {
             address: NetworkEndian::read_u128(bytes),
             mask: 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
         }
@@ -241,9 +279,9 @@ impl From<&[u8]> for Ip6Address {
 
 /// Convert string into IPv6 address
 impl From<&str> for Ip6Address {
-    fn from(string: &str) -> Ip6Address {
+    fn from(string: &str) -> Self {
         let (address, mask) = ip6_str_to_u128(string).expect("Bad IPv6 address format");
-        Ip6Address { address, mask }
+        Self { address, mask }
     }
 }
 
@@ -265,40 +303,344 @@ impl fmt::Debug for Ip6Address {
     }
 }
 
-/*
+/// Convert IPv6 address into u128
+impl From<Ip6Address> for u128 {
+    fn from(ip6_address: Ip6Address) -> Self {
+        ip6_address.address
+    }
+}
+
 /// Unit tests
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const TEST_CASES: [(&str, u128); 8] = [
-        ("fe80::7", 0xfe80_0000_0000_0000_0000_0000_0000_0007),
+    const CONVERSION_TEST_CASES: [(&str, (u128, u128)); 9] = [
         (
-            "1111:2222:3333:4444:5555:aabb:ccdd:eeff",
-            0x1111_2222_3333_4444_5555_aabb_ccdd_eeff,
+            "fe80::7/64",
+            (
+                0xfe80_0000_0000_0000_0000_0000_0000_0007,
+                0xffff_ffff_ffff_ffff_0000_0000_0000_0000,
+            ),
         ),
-        ("0:0:7::7", 0x0000_0000_0007_0000_0000_0000_0000_0007),
-        ("::7:0:0:7:0:0", 0x0000_0000_0007_0000_0000_0007_0000_0000),
-        ("0:0:7::7:0", 0x0000_0000_0007_0000_0000_0000_0007_0000),
-        ("::7", 0x0000_0000_0000_0000_0000_0000_0000_0007),
-        ("7::", 0x0007_0000_0000_0000_0000_0000_0000_0000),
-        ("::", 0x0000_0000_0000_0000_0000_0000_0000_0000),
+        (
+            "1111:2222:3333:4444:5555:aabb:ccdd:eeff/48",
+            (
+                0x1111_2222_3333_4444_5555_aabb_ccdd_eeff,
+                0xffff_ffff_ffff_0000_0000_0000_0000_0000,
+            ),
+        ),
+        (
+            "0:0:7::7/24",
+            (
+                0x0000_0000_0007_0000_0000_0000_0000_0007,
+                0xffff_ff00_0000_0000_0000_0000_0000_0000,
+            ),
+        ),
+        (
+            "::7:0:0:7:0:0/124",
+            (
+                0x0000_0000_0007_0000_0000_0007_0000_0000,
+                0xffff_ffff_ffff_ffff_ffff_ffff_ffff_fff0,
+            ),
+        ),
+        (
+            "0:0:7::7:0/1",
+            (
+                0x0000_0000_0007_0000_0000_0000_0007_0000,
+                0x8000_0000_0000_0000_0000_0000_0000_0000,
+            ),
+        ),
+        (
+            "::7/80",
+            (
+                0x0000_0000_0000_0000_0000_0000_0000_0007,
+                0xffff_ffff_ffff_ffff_ffff_0000_0000_0000,
+            ),
+        ),
+        (
+            "7::/96",
+            (
+                0x0007_0000_0000_0000_0000_0000_0000_0000,
+                0xffff_ffff_ffff_ffff_ffff_ffff_0000_0000,
+            ),
+        ),
+        (
+            "::/0",
+            (
+                0x0000_0000_0000_0000_0000_0000_0000_0000,
+                0x0000_0000_0000_0000_0000_0000_0000_0000,
+            ),
+        ),
+        (
+            "::",
+            (
+                0x0000_0000_0000_0000_0000_0000_0000_0000,
+                0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff,
+            ),
+        ),
+    ];
+
+    const CONVERSION_FAIL_CASES: [&str; 7] = [
+        "0000:0000:0000:0000:0000:0000:0000:0000:0000",
+        "0000:0000:0000:0000:0000:0000:0000",
+        "a::b::c",
+        "fe80::1/129",
+        "fe80::1//64",
+        "fe80::1/",
+        "",
     ];
 
     #[test]
     #[allow(non_snake_case)]
-    fn u128_to_ip6_str__assert() {
-        for test_case in TEST_CASES {
-            assert_eq!(u128_to_ip6_str(test_case.1), test_case.0);
+    fn test__u128_to_ip6_str() {
+        for test_case in CONVERSION_TEST_CASES {
+            assert_eq!(
+                u128_to_ip6_str(test_case.1 .0, test_case.1 .1).unwrap(),
+                test_case.0
+            );
         }
     }
 
     #[test]
     #[allow(non_snake_case)]
-    fn ip6_str_to_u128__assert() {
-        for test_case in TEST_CASES {
-            assert_eq!(ip6_str_to_u128(test_case.0).unwrap(), test_case.1);
+    fn test__ip6_str_to_u128() {
+        for test_case in CONVERSION_TEST_CASES {
+            assert_eq!(ip6_str_to_u128(test_case.0).unwrap(), (test_case.1));
         }
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_str_to_u128__fail() {
+        for test_case in CONVERSION_FAIL_CASES {
+            assert!(ip6_str_to_u128(test_case).is_err());
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__new() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff/64");
+        assert_eq!(
+            ip6_address.address,
+            0x0011_2233_4455_6677_8899_aabb_ccdd_eeff
+        );
+        assert_eq!(ip6_address.mask, 0xffff_ffff_ffff_ffff_0000_0000_0000_0000);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__new__no_mask() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff");
+        assert_eq!(
+            ip6_address.address,
+            0x0011_2233_4455_6677_8899_aabb_ccdd_eeff
+        );
+        assert_eq!(ip6_address.mask, 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__eui64() {
+        let ip6_address = Ip6Address::eui64(
+            Ip6Address::new("fe80::/64"),
+            MacAddress::new("01:02:03:04:05:06"),
+        );
+        assert_eq!(ip6_address, Ip6Address::new("fe80::302:3FF:FE04:506/64"))
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__to_bytes() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff");
+        assert_eq!(
+            ip6_address.to_bytes(),
+            [
+                0x00u8, 0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8, 0x88u8, 0x99u8,
+                0xaau8, 0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8,
+            ]
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__host() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff/64").host();
+        assert_eq!(
+            ip6_address.address,
+            0x0011_2233_4455_6677_8899_aabb_ccdd_eeff
+        );
+        assert_eq!(ip6_address.mask, 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__network() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff/64").network();
+        assert_eq!(
+            ip6_address.address,
+            0x0011_2233_4455_6677_0000_0000_0000_0000
+        );
+        assert_eq!(ip6_address.mask, 0xffff_ffff_ffff_ffff_0000_0000_0000_0000);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__contains() {
+        let ip6_network = Ip6Address::new("0011:2233:4455:6677::/64");
+        assert!(ip6_network.contains(Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff")));
+        assert!(!ip6_network.contains(Ip6Address::new("fe80::1")));
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__is_unspecified() {
+        assert!(Ip6Address::new("::").is_unspecified());
+        assert!(!Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff").is_unspecified());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__is_loopback() {
+        assert!(Ip6Address::new("::1").is_loopback());
+        assert!(!Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff").is_loopback());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__is_global() {
+        assert!(Ip6Address::new("2001::1").is_global());
+        assert!(!Ip6Address::new("fe80::1").is_global());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__is_private() {
+        assert!(Ip6Address::new("fc00::1").is_private());
+        assert!(Ip6Address::new("fd00::1").is_private());
+        assert!(!Ip6Address::new("fe80::1").is_private());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__is_link_local() {
+        assert!(Ip6Address::new("fe80::1").is_link_local());
+        assert!(!Ip6Address::new("2001::1").is_link_local());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__is_unicast() {
+        assert!(Ip6Address::new("fe80::1").is_unicast());
+        assert!(Ip6Address::new("2001::1").is_unicast());
+        assert!(!Ip6Address::new("ff00::1").is_unicast());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__is_multicast() {
+        assert!(Ip6Address::new("ff00::1").is_multicast());
+        assert!(!Ip6Address::new("fe80::1").is_multicast());
+        assert!(!Ip6Address::new("2001::1").is_multicast());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__is_solicited_node_multicast() {
+        assert!(Ip6Address::new("ff02::1:ff00:0").is_solicited_node_multicast());
+        assert!(!Ip6Address::new("ff00::1").is_solicited_node_multicast());
+        assert!(!Ip6Address::new("fe80::1").is_solicited_node_multicast());
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__solicited_node_multicast() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff/64");
+        assert_eq!(
+            ip6_address.solicited_node_multicast(),
+            Ip6Address::new("ff02::1:ffdd:eeff")
+        )
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__get_prefix_len() {
+        let ip6_address = Ip6Address::new("0011:2233:4455::/48");
+        assert_eq!(ip6_address.get_prefix_len(), 48);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__set_prefix_len() {
+        let mut ip6_address = Ip6Address::new("0011:2233:4455::/48");
+        ip6_address.set_prefix_len(32);
+        assert_eq!(ip6_address.mask, 0xffff_ffff_0000_0000_0000_0000_0000_0000);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__from_u8() {
+        let ip6_address: Ip6Address = [
+            0x00u8, 0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8, 0x88u8, 0x99u8, 0xaau8,
+            0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8,
+        ][..]
+            .into();
+        assert_eq!(
+            ip6_address.address,
+            0x0011_2233_4455_6677_8899_aabb_ccdd_eeff
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__from_str() {
+        let ip6_address: Ip6Address = "0011:2233:4455:6677:8899:aabb:ccdd:eeff/64".into();
+        assert_eq!(
+            ip6_address.address,
+            0x0011_2233_4455_6677_8899_aabb_ccdd_eeff
+        );
+        assert_eq!(ip6_address.mask, 0xffff_ffff_ffff_ffff_0000_0000_0000_0000);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__from_str__no_mask() {
+        let ip6_address: Ip6Address = "0011:2233:4455:6677:8899:aabb:ccdd:eeff".into();
+        assert_eq!(
+            ip6_address.address,
+            0x0011_2233_4455_6677_8899_aabb_ccdd_eeff
+        );
+        assert_eq!(ip6_address.mask, 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__fmt_display() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff/128");
+        assert_eq!(
+            format!("{}", ip6_address),
+            "11:2233:4455:6677:8899:aabb:ccdd:eeff"
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__ip6_address__fmt_debug() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff/128");
+        assert_eq!(
+            format!("{:?}", ip6_address),
+            "Ip6Address(11:2233:4455:6677:8899:aabb:ccdd:eeff)"
+        );
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test__u128__from_ip6_address() {
+        let ip6_address = Ip6Address::new("0011:2233:4455:6677:8899:aabb:ccdd:eeff");
+        assert_eq!(
+            u128::from(ip6_address),
+            0x0011_2233_4455_6677_8899_aabb_ccdd_eeff
+        );
+    }
 }
-*/
