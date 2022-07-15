@@ -23,6 +23,8 @@
 ############################################################################
 */
 
+#![allow(dead_code)]
+
 use crate::lib::packet::Packet;
 use crate::lib::tap_io;
 use crate::log_tx_ring as log;
@@ -63,34 +65,34 @@ impl TxRing {
         log!("<lv>Thread spawned: 'tx_ring - {}'</>", self.nic_name);
 
         loop {
-            let mut packet_tx = match self.mpsc_from_packet_handler.recv() {
-                Ok(packet_tx) => packet_tx,
-                Err(error) => {
-                    log!("<CRIT> MPSC channel error: '{}'</>", error);
+            let mut packet_tx = self
+                .mpsc_from_packet_handler
+                .recv()
+                .unwrap_or_else(|error| {
+                    log!("<CRIT>MPSC channel error: '{}'</>", error);
                     panic!();
-                }
-            };
+                });
 
             packet_tx.assemble();
 
             if packet_tx.frame.len() > self.nic_mtu {
                 log!(
-                    "<CRIT>Frame send error: frame length of {} bytes exceed interface mtu {}",
+                    "<CRIT>Frame send error: frame length of {} bytes exceed interface mtu {}</>",
                     packet_tx.frame.len(),
                     self.nic_mtu
                 );
-                continue;
+                panic!();
             }
 
             match tap_io::write(&mut self.nic_fd, &packet_tx.frame) {
                 Ok(bytes_sent) => {
                     if bytes_sent != packet_tx.frame.len() {
                         log!(
-                            "<CRIT>Frame send error: {} out of {} bytes sent",
+                            "<CRIT>Frame send error: {} out of {} bytes sent</>",
                             bytes_sent,
                             packet_tx.frame.len()
                         );
-                        continue;
+                        panic!();
                     }
                     log!(
                         "<tx>[TX]</> {} - Sent frame, {} bytes",
@@ -98,7 +100,10 @@ impl TxRing {
                         bytes_sent
                     );
                 }
-                Err(error) => log!("<CRIT>Frame send error: {}", error),
+                Err(error) => {
+                    log!("<CRIT>Frame send error: {}</>", error);
+                    panic!();
+                }
             }
         }
     }

@@ -23,10 +23,13 @@
 ############################################################################
 */
 
+#![allow(dead_code)]
+
 use crate::lib::packet::Packet;
 use crate::lib::tap_io;
 use crate::lib::util;
 use crate::log_rx_ring as log;
+use core::panic;
 use filedescriptor::FileDescriptor;
 use std::sync::mpsc;
 use std::thread;
@@ -69,8 +72,8 @@ impl RxRing {
             match tap_io::read(&mut self.nic_fd) {
                 Ok(frame_rx) => {
                     if frame_rx.len() > self.nic_mtu {
-                        log!("<CRIT> Frame receive error: frame lenght of {} bytes exceeds interface mtu {}</>", frame_rx.len(), self.nic_mtu);
-                        continue;
+                        log!("<CRIT>Frame receive error: frame lenght of {} bytes exceeds interface mtu {}</>", frame_rx.len(), self.nic_mtu);
+                        panic!();
                     }
 
                     let mut packet_rx = Packet::new(
@@ -87,13 +90,13 @@ impl RxRing {
                     );
 
                     if let Err(error) = self.mpsc_to_packet_handler.send(packet_rx) {
-                        log!("<CRIT> MPSC channel error: '{}'</>", error);
-                        panic!()
+                        log!("<CRIT>MPSC channel error: '{}'</>", error);
+                        panic!();
                     }
                 }
                 Err(error) => {
-                    log!("<CRIT> Frame receive error: '{}'</>", error);
-                    continue;
+                    log!("<CRIT>Frame receive error: '{}'</>", error);
+                    panic!();
                 }
             }
         }
