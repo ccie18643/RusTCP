@@ -39,6 +39,7 @@ use crate::log_nd_cache as log;
 use crate::protocols::ether;
 use crate::protocols::icmp6_nd;
 use crate::protocols::ip6;
+use crate::protocols::protocol::Protocol;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -47,11 +48,26 @@ use std::time;
 
 #[derive(Debug)]
 enum State {
-    Incomplete(time::Instant, usize),
-    Reachable(MacAddress, time::Instant),
-    Stale(MacAddress),
-    Delay(MacAddress, time::Instant),
-    Probe(MacAddress, time::Instant, usize),
+    Incomplete {
+        timestamp: time::Instant,
+        attempt: usize,
+    },
+    Reachable {
+        clla: MacAddress,
+        timestamp: time::Instant,
+    },
+    Stale {
+        clla: MacAddress,
+    },
+    Delay {
+        clla: MacAddress,
+        timestamp: time::Instant,
+    },
+    Probe {
+        clla: MacAddress,
+        timestamp: time::Instant,
+        attempt: usize,
+    },
 }
 
 #[allow(clippy::mutex_atomic)]
@@ -74,8 +90,8 @@ impl NdCache {
         mpsc_to_tx_ring: mpsc::Sender<Packet>,
         mac_address_tx: MacAddress,
         ip6_address_tx: Arc<Mutex<HashSet<Ip6Address>>>,
-    ) -> NdCache {
-        let nd_cache = NdCache {
+    ) -> Self {
+        let nd_cache = Self {
             state_table: Arc::new(Mutex::new(HashMap::with_capacity(256))),
             nic_name,
             nic_mtu,
@@ -94,7 +110,7 @@ impl NdCache {
                     let state_table_keys: Vec<Ip6Address> = state_table.keys().cloned().collect();
                     for cnla in state_table_keys {
                         match state_table[&cnla] {
-                            State::Incomplete(timestamp, attempt) => {
+                            State::Incomplete { timestamp, attempt } => {
                                 if timestamp.elapsed().as_secs() >= ND_CACHE__INCOMPLETE_RETRY_TIME
                                 {
                                     // |white| retransmit limit reached
@@ -109,7 +125,10 @@ impl NdCache {
                                     // INCOMPLETE -> INCOMPLETE, Send ICMPv6 error
                                     state_table.insert(
                                         cnla,
-                                        State::Incomplete(time::Instant::now(), attempt + 1),
+                                        State::Incomplete {
+                                            timestamp: time::Instant::now(),
+                                            attempt: attempt + 1,
+                                        },
                                     );
                                     log!(
                                     "{} - Incomplete timer expired <lb>[INCOMPLETE -> INCOMPLETE]</>",
@@ -118,11 +137,11 @@ impl NdCache {
                                     self_c.send_neighbor_solicitation_multicast(cnla);
                                 }
                             }
-                            State::Reachable(clla, timestamp) => {
+                            State::Reachable { clla, timestamp } => {
                                 // |white| timeout
                                 // REACHABLE -> STALE
                                 if timestamp.elapsed().as_secs() >= ND_CACHE__REACHABLE_TIME {
-                                    state_table.insert(cnla, State::Stale(clla));
+                                    state_table.insert(cnla, State::Stale { clla });
                                     log!(
                                         "{} - Reachable timer expired <lb>[REACHABLE -> STALE]</>, lla {}",
                                         cnla,
@@ -130,13 +149,19 @@ impl NdCache {
                                     );
                                 }
                             }
-                            State::Stale(..) => (),
-                            State::Delay(clla, timestamp) => {
+                            State::Stale { .. } => (),
+                            State::Delay { clla, timestamp } => {
                                 // |white| timeout
                                 // DELAY -> PROBE
                                 if timestamp.elapsed().as_secs() >= ND_CACHE__DELAY_TIME {
-                                    state_table
-                                        .insert(cnla, State::Probe(clla, time::Instant::now(), 0));
+                                    state_table.insert(
+                                        cnla,
+                                        State::Probe {
+                                            clla,
+                                            timestamp: time::Instant::now(),
+                                            attempt: 0,
+                                        },
+                                    );
                                     log!(
                                         "{} - Delay timer expired <lb>[DELAY -> PROBE]</>, lla {}",
                                         cnla,
@@ -145,7 +170,11 @@ impl NdCache {
                                     self_c.send_neighbor_solicitation_unicast(cnla, clla);
                                 }
                             }
-                            State::Probe(clla, timestamp, attempt) => {
+                            State::Probe {
+                                clla,
+                                timestamp,
+                                attempt,
+                            } => {
                                 if timestamp.elapsed().as_secs() >= ND_CACHE__PROBE_RETRY_TIME {
                                     // |white| retransmit limit reached
                                     // PROBE -> NONEXISTENT
@@ -158,7 +187,11 @@ impl NdCache {
                                     // PROBE -> PROBE
                                     state_table.insert(
                                         cnla,
-                                        State::Probe(clla, time::Instant::now(), attempt + 1),
+                                        State::Probe {
+                                            clla,
+                                            timestamp: time::Instant::now(),
+                                            attempt: attempt + 1,
+                                        },
                                     );
                                     log!(
                                         "{} - Probe timer expired <lb>[PROBE -> PROBE], lla {}</>",
@@ -179,26 +212,32 @@ impl NdCache {
     }
 
     /// Find cache entry for given IPv6 address
-    pub fn find(&self, nla: &Ip6Address) -> Option<MacAddress> {
+    pub fn find(&self, nla: Ip6Address) -> Option<MacAddress> {
         // TODO: Some optimalization of time when state_table is locked needed here
         let state_table = &mut *self.state_table.lock().unwrap();
-        match state_table.get(nla) {
+        match state_table.get(&nla) {
             // |white| packet to be sent out
             // NONEXTISTENT -> INCOMPLETE, send out multicast NS
             None => {
-                state_table.insert(*nla, State::Incomplete(time::Instant::now(), 0));
+                state_table.insert(
+                    nla,
+                    State::Incomplete {
+                        timestamp: time::Instant::now(),
+                        attempt: 0,
+                    },
+                );
                 log!(
                     "{} - Internal query <lb>[NONEXISTENT -> INCOMPLETE]</>",
                     nla
                 );
-                self.send_neighbor_solicitation_multicast(*nla);
+                self.send_neighbor_solicitation_multicast(nla);
                 None
             }
-            Some(State::Incomplete(..)) => None,
-            Some(State::Reachable(clla, ..)) => Some(*clla),
-            Some(State::Stale(clla, ..)) => Some(*clla),
-            Some(State::Delay(clla, ..)) => Some(*clla),
-            Some(State::Probe(clla, ..)) => Some(*clla),
+            Some(State::Incomplete { .. }) => None,
+            Some(State::Reachable { clla, .. })
+            | Some(State::Stale { clla, .. })
+            | Some(State::Delay { clla, .. })
+            | Some(State::Probe { clla, .. }) => Some(*clla),
         }
     }
 
@@ -207,9 +246,15 @@ impl NdCache {
         let state_table = &mut *self.state_table.lock().unwrap();
         // |blue| upper-layer inbound activity
         // STALE -> REACHABLE
-        if let Some(State::Stale(clla, ..)) = state_table.get(&nla) {
+        if let Some(State::Stale { clla, .. }) = state_table.get(&nla) {
             let clla = *clla;
-            state_table.insert(nla, State::Reachable(clla, time::Instant::now()));
+            state_table.insert(
+                nla,
+                State::Reachable {
+                    clla,
+                    timestamp: time::Instant::now(),
+                },
+            );
             log!(
                 "{} - Reachability reported <lb>[STALE -> REACHABLE]</>, lla {}",
                 nla,
@@ -223,9 +268,15 @@ impl NdCache {
         let state_table = &mut *self.state_table.lock().unwrap();
         // |white| upper-layer outbound activity
         // STALE -> DELAY
-        if let Some(State::Stale(clla, ..)) = state_table.get(&nla) {
+        if let Some(State::Stale { clla, .. }) = state_table.get(&nla) {
             let clla = *clla;
-            state_table.insert(nla, State::Delay(clla, time::Instant::now()));
+            state_table.insert(
+                nla,
+                State::Delay {
+                    clla,
+                    timestamp: time::Instant::now(),
+                },
+            );
             log!(
                 "{} - Activity reported <lb>[STALE -> DELAY]</>, lla {}",
                 nla,
@@ -247,7 +298,7 @@ impl NdCache {
             // |white} received NS[]
             // NONEXISTENT -> STALE
             None => {
-                state_table.insert(nla, State::Stale(lla));
+                state_table.insert(nla, State::Stale { clla: lla });
                 log!(
                     "{} - Received NS message <lb>[NONEXISTENT -> STALE]</>, lla {}",
                     nla,
@@ -256,8 +307,8 @@ impl NdCache {
             }
             // |general| received NS[]
             // INCOMPLETE -> STALE, record lla
-            Some(State::Incomplete(..)) => {
-                state_table.insert(nla, State::Stale(lla));
+            Some(State::Incomplete { .. }) => {
+                state_table.insert(nla, State::Stale { clla: lla });
                 log!(
                     "{} - Received NS message <lb>[INCOMPLETE -> STALE]</>, lla {}",
                     nla,
@@ -267,9 +318,9 @@ impl NdCache {
             }
             // |general| received NS[different lla]
             // REACHABLE -> STALE, record lla
-            Some(State::Reachable(clla, ..)) if *clla != lla => {
+            Some(State::Reachable { clla, .. }) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Stale(clla));
+                state_table.insert(nla, State::Stale { clla });
                 log!(
                     "{} - Received NS message <lb>[REACHABLE -> STALE]</>, lla {} -> {}",
                     nla,
@@ -279,9 +330,9 @@ impl NdCache {
             }
             // |general| received NS[different lla]
             // STALE -> STALE, record lla
-            Some(State::Stale(clla, ..)) if *clla != lla => {
+            Some(State::Stale { clla, .. }) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Stale(clla));
+                state_table.insert(nla, State::Stale { clla });
                 log!(
                     "{} - Received NS message <lb>[STALE -> STALE]</>, lla {} -> {}",
                     nla,
@@ -291,9 +342,9 @@ impl NdCache {
             }
             // |general| received NS[different lla]
             // DELAY -> STALE, record lla
-            Some(State::Delay(clla, ..)) if *clla != lla => {
+            Some(State::Delay { clla, .. }) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Stale(clla));
+                state_table.insert(nla, State::Stale { clla });
                 log!(
                     "{} - Received NS message <lb>[DELAY -> STALE]</>, lla {} -> {}",
                     nla,
@@ -303,9 +354,9 @@ impl NdCache {
             }
             // |general| received NS[different lla]
             // PROBE -> STALE, record lla
-            Some(State::Probe(clla, ..)) if *clla != lla => {
+            Some(State::Probe { clla, .. }) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Stale(clla));
+                state_table.insert(nla, State::Stale { clla });
                 log!(
                     "{} - Received NS message <lb>[PROBE -> STALE]</>, lla {} -> {}",
                     nla,
@@ -333,8 +384,14 @@ impl NdCache {
         ) {
             // |blue| received NA[S=1, O=any]
             // INCOMPLETE -> REACHABLE, record lla, send queued packets
-            (Some(State::Incomplete(..)), true, _) => {
-                state_table.insert(nla, State::Reachable(lla, time::Instant::now()));
+            (Some(State::Incomplete { .. }), true, _) => {
+                state_table.insert(
+                    nla,
+                    State::Reachable {
+                        clla: lla,
+                        timestamp: time::Instant::now(),
+                    },
+                );
                 log!(
                     "{} - Received NA message <lb>[INCOMPLETE -> REACHABLE]</>, lla {}",
                     nla,
@@ -344,8 +401,8 @@ impl NdCache {
             }
             // |red| received NA[S=0, O=any]
             // INCOMPLETE -> STALE, record lla, send queued packets
-            (Some(State::Incomplete(..)), false, _) => {
-                state_table.insert(nla, State::Stale(lla));
+            (Some(State::Incomplete { .. }), false, _) => {
+                state_table.insert(nla, State::Stale { clla: lla });
                 log!(
                     "{} - Received NA message <lb>[INCOMPLETE -> STALE]</>, lla {}",
                     nla,
@@ -355,9 +412,9 @@ impl NdCache {
             }
             // |yellow| received NA[S=1, O=0, lla different]
             // REACHABLE -> STALE, ignore lla
-            (Some(State::Reachable(clla, ..)), true, false) if *clla != lla => {
+            (Some(State::Reachable { clla, .. }), true, false) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Stale(clla));
+                state_table.insert(nla, State::Stale { clla });
                 log!(
                     "{} - Received NA message <lb>[REACHABLE -> STALE]</>, lla {} -/> {}",
                     nla,
@@ -367,9 +424,9 @@ impl NdCache {
             }
             // |red| received NA[S=0, O=1, lla different]
             // REACHABLE -> STALE, record lla
-            (Some(State::Reachable(clla, ..)), false, true) if *clla != lla => {
+            (Some(State::Reachable { clla, .. }), false, true) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Stale(lla));
+                state_table.insert(nla, State::Stale { clla: lla });
                 log!(
                     "{} -  Received NA message <lb>[REACHABLE -> STALE]</>, lla {} -> {}",
                     nla,
@@ -379,9 +436,15 @@ impl NdCache {
             }
             // |blue| received NA[S=1, O=1]
             // STALE -> REACHABLE, record lla if different
-            (Some(State::Stale(clla, ..)), true, true) => {
+            (Some(State::Stale { clla, .. }), true, true) => {
                 let clla = *clla;
-                state_table.insert(nla, State::Reachable(lla, time::Instant::now()));
+                state_table.insert(
+                    nla,
+                    State::Reachable {
+                        clla: lla,
+                        timestamp: time::Instant::now(),
+                    },
+                );
                 log!(
                     "{} - Received NA message <lb>[STALE -> REACHABLE]</>, lla {} -> {}",
                     nla,
@@ -391,9 +454,15 @@ impl NdCache {
             }
             // |yellow| received NA[S=1, O=0, different lla]
             // STALE->STALE, ignore lla
-            (Some(State::Stale(clla, ..)), true, false) if *clla != lla => {
+            (Some(State::Stale { clla, .. }), true, false) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Reachable(clla, time::Instant::now()));
+                state_table.insert(
+                    nla,
+                    State::Reachable {
+                        clla,
+                        timestamp: time::Instant::now(),
+                    },
+                );
                 log!(
                     "{} - Received NA message <lb>[STALE -> STALE]</>, lla {} -/> {}",
                     nla,
@@ -403,9 +472,15 @@ impl NdCache {
             }
             // |blue| received NA[S=1, O=1]
             // DELAY -> REACHABLE, record lla if different
-            (Some(State::Delay(clla, ..)), true, true) => {
+            (Some(State::Delay { clla, .. }), true, true) => {
                 let clla = *clla;
-                state_table.insert(nla, State::Reachable(lla, time::Instant::now()));
+                state_table.insert(
+                    nla,
+                    State::Reachable {
+                        clla: lla,
+                        timestamp: time::Instant::now(),
+                    },
+                );
                 log!(
                     "{} - Received NA message <lb>[DELAY -> REACHABLE]</>, lla {} -> {}",
                     nla,
@@ -415,9 +490,15 @@ impl NdCache {
             }
             // |yellow| received NA[S=1, O=0, different lla]
             // DELAY -> DELAY, ignore lla
-            (Some(State::Delay(clla, ..)), true, false) if *clla != lla => {
+            (Some(State::Delay { clla, .. }), true, false) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Reachable(clla, time::Instant::now()));
+                state_table.insert(
+                    nla,
+                    State::Reachable {
+                        clla,
+                        timestamp: time::Instant::now(),
+                    },
+                );
                 log!(
                     "{} - Received NA message <lb>[DELAY -> DELAY]</>, lla {} -/> {}",
                     nla,
@@ -427,9 +508,9 @@ impl NdCache {
             }
             // |red| received NA[S=0, O=1, different lla]
             // DELAY -> STALE, record lla
-            (Some(State::Delay(clla, ..)), false, true) if *clla != lla => {
+            (Some(State::Delay { clla, .. }), false, true) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Stale(lla));
+                state_table.insert(nla, State::Stale { clla: lla });
                 log!(
                     "{} - Received NA message <lb>[DELAY -> STALE]</>, lla {} -> {}",
                     nla,
@@ -439,9 +520,15 @@ impl NdCache {
             }
             // |blue| received NA[S=1, O=1]
             // PROBE -> REACHABLE, record lla if different
-            (Some(State::Probe(clla, ..)), true, true) => {
+            (Some(State::Probe { clla, .. }), true, true) => {
                 let clla = *clla;
-                state_table.insert(nla, State::Reachable(lla, time::Instant::now()));
+                state_table.insert(
+                    nla,
+                    State::Reachable {
+                        clla: lla,
+                        timestamp: time::Instant::now(),
+                    },
+                );
                 log!(
                     "{} - Received NA message <lb>[PROBE -> REACHABLE]</>, lla {} -> {}",
                     nla,
@@ -451,9 +538,15 @@ impl NdCache {
             }
             // |yellow| received NA[S=1, O=0, different lla]
             // PROBE -> DELAY, ignore lla
-            (Some(State::Probe(clla, ..)), true, false) if *clla != lla => {
+            (Some(State::Probe { clla, .. }), true, false) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Reachable(clla, time::Instant::now()));
+                state_table.insert(
+                    nla,
+                    State::Reachable {
+                        clla,
+                        timestamp: time::Instant::now(),
+                    },
+                );
                 log!(
                     "{} - Received NA message <lb>[PROBE -> DELAY]</>, lla {} -/> {}",
                     nla,
@@ -463,9 +556,9 @@ impl NdCache {
             }
             // |red| received NA[S=0, O=1, different lla]
             // PROBE -> STALE, record lla
-            (Some(State::Probe(clla, ..)), false, true) if *clla != lla => {
+            (Some(State::Probe { clla, .. }), false, true) if *clla != lla => {
                 let clla = *clla;
-                state_table.insert(nla, State::Stale(lla));
+                state_table.insert(nla, State::Stale { clla: lla });
                 log!(
                     "{} - Received NA message <lb>[PROBE -> STALE]</>, lla {} -> {}",
                     nla,
@@ -497,7 +590,7 @@ impl NdCache {
 
         let ip6_tx = ip6::Ip6::new()
             .set_src(
-                util::ip6_select_src(&nla, &self.ip6_address_tx)
+                util::ip6_select_src(nla, &self.ip6_address_tx)
                     .expect("TODO: Unable to select src address"),
             )
             .set_dst(nla.solicited_node_multicast())
@@ -543,7 +636,7 @@ impl NdCache {
 
         let ip6_tx = ip6::Ip6::new()
             .set_src(
-                util::ip6_select_src(&nla, &self.ip6_address_tx)
+                util::ip6_select_src(nla, &self.ip6_address_tx)
                     .expect("TODO: Unable to select src address"),
             )
             .set_dst(nla)
