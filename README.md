@@ -21,3 +21,8 @@
 
 ![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_ping_00.png)
 ![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_ping_01.png)
+
+#### Using Eui64 + ICMPv6 Router Solicitation / Router Advertisement mechanism to automatically assign LLA and GUA addresses
+
+![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_autoip_00.png)
+![Sample RusTCP log output](https://github.com/ccie18643/RusTCP/blob/master/doc/images/ip6_autoip_01.png)
