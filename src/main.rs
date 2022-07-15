@@ -31,6 +31,7 @@ mod subsystems;
 use std::thread;
 use std::time::Duration;
 
+use crate::lib::mac_address::MacAddress;
 use crate::subsystems::packet_handler;
 
 fn main() {
@@ -38,10 +39,10 @@ fn main() {
         "<B>RusTCP</> - TCP/IP Stack written in <r>Rust</>, 2021 <B><y>Sebastian Majewski</>"
     );
 
-    packet_handler::PacketHandler::new(7, 1514, "02:00:00:77:77:77".into())
-        .set_ip6_address("fe80::7/64".into())
-        .set_ip6_address("2007::7/64".into())
-        .run();
+    packet_handler::PacketHandler::new(7, 1514, MacAddress::new("02:00:00:77:77:77"))
+        .set_ip6_lla_eui64()
+        .set_ip6_gua_eui64()
+        .log_addresses();
 
     loop {
         thread::sleep(Duration::from_millis(1000));
