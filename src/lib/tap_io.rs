@@ -23,13 +23,12 @@
 ############################################################################
 */
 
+use crate::config::FRAME_RX_MAX_LEN;
 use filedescriptor::FileDescriptor;
 use std::io::Error;
 use std::io::Read;
 use std::io::Write;
 use utuntap::tap;
-
-const MAX_FRAME_RX_LEN: usize = 2048;
 
 /// Open TAP interface
 pub fn open(num: u8) -> Result<(String, FileDescriptor), Error> {
@@ -42,7 +41,7 @@ pub fn open(num: u8) -> Result<(String, FileDescriptor), Error> {
 
 /// Read from TAP interface
 pub fn read(fd: &mut FileDescriptor) -> Result<Vec<u8>, Error> {
-    let mut frame_rx = vec![0u8; MAX_FRAME_RX_LEN];
+    let mut frame_rx = vec![0u8; FRAME_RX_MAX_LEN];
     let frame_rx_len = fd.read(&mut frame_rx)?;
     frame_rx.truncate(frame_rx_len);
     Ok(frame_rx)
