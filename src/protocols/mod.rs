@@ -27,3 +27,4 @@ pub mod ether;
 pub mod icmp6;
 pub mod icmp6_nd;
 pub mod ip6;
+pub mod protocol;
