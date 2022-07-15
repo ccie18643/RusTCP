@@ -30,3 +30,8 @@ pub const ND_CACHE__DELAY_TIME: u64 = 5;
 pub const ND_CACHE__PROBE_RETRY_TIME: u64 = 1;
 pub const ND_CACHE__PROBE_RETRY_LIMIT: usize = 2;
 pub const ND_CACHE__TIME_LOOP_DELAY: u64 = 100;
+
+pub const IP6_DAD_RETRIES: usize = 3;
+pub const IP6_DAD_DELAY: u64 = 500;
+
+pub const FRAME_RX_MAX_LEN: usize = 2048;
