@@ -23,7 +23,10 @@
 ############################################################################
 */
 
+#![allow(dead_code)]
+
 use crate::lib::mac_address::MacAddress;
+use crate::protocols::protocol::{self, Protocol};
 use byteorder::{ByteOrder, NetworkEndian};
 use std::fmt;
 
@@ -40,12 +43,19 @@ pub struct Ether {
 
 impl Ether {
     /// Create empty header
-    pub fn new() -> Ether {
-        Ether {
+    pub fn new() -> Self {
+        Self {
             _dst: MacAddress::default(),
             _src: MacAddress::default(),
             _type: 0,
         }
+    }
+
+    /// Create header based on parsed bytes
+    pub fn from(frame_rx: &[u8]) -> Self {
+        let mut header = Self::new();
+        header.parse(frame_rx);
+        header
     }
 
     /// Get the destination MAC address
@@ -54,7 +64,7 @@ impl Ether {
     }
 
     /// Set the destination MAC address
-    pub fn set_dst(mut self, _dst: MacAddress) -> Ether {
+    pub fn set_dst(mut self, _dst: MacAddress) -> Self {
         self._dst = _dst;
         self
     }
@@ -65,7 +75,7 @@ impl Ether {
     }
 
     /// Set the source MAC address
-    pub fn set_src(mut self, _src: MacAddress) -> Ether {
+    pub fn set_src(mut self, _src: MacAddress) -> Self {
         self._src = _src;
         self
     }
@@ -76,26 +86,27 @@ impl Ether {
     }
 
     /// Set the value of 'type' header field
-    pub fn set_type(mut self, _type: u16) -> Ether {
+    pub fn set_type(mut self, _type: u16) -> Self {
         self._type = _type;
         self
     }
+}
 
+impl protocol::Protocol for Ether {
     /// Get header length
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         HEADER_LEN
     }
 
     /// Parse header
-    pub fn parse(mut self, frame_rx: &[u8]) -> Self {
+    fn parse(&mut self, frame_rx: &[u8]) {
         self._dst = frame_rx[0..6].into();
         self._src = frame_rx[6..12].into();
         self._type = NetworkEndian::read_u16(&frame_rx[12..14]);
-        self
     }
 
     /// Assemble header
-    pub fn assemble(&self, frame_tx: &mut Vec<u8>) {
+    fn assemble(&self, frame_tx: &mut Vec<u8>) {
         frame_tx.extend_from_slice(&self._dst.to_bytes());
         frame_tx.extend_from_slice(&self._src.to_bytes());
         frame_tx.extend_from_slice(&self._type.to_be_bytes());

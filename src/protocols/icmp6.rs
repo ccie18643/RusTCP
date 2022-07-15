@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -25,6 +23,9 @@
 ############################################################################
 */
 
+#![allow(dead_code)]
+
+use crate::protocols::protocol::{self, Protocol};
 use byteorder::{ByteOrder, NetworkEndian};
 use internet_checksum::Checksum as InetCksum;
 use std::fmt;
@@ -44,15 +45,22 @@ pub struct EchoRequest {
     phdr: Vec<u8>,
 }
 
-impl<'a> EchoRequest {
+impl EchoRequest {
     /// Create empty message struct
-    pub fn new() -> EchoRequest {
-        EchoRequest {
+    pub fn new() -> Self {
+        Self {
             _id: 0,
             _seq: 0,
             data: Vec::default(),
             phdr: Vec::default(),
         }
+    }
+
+    /// Create message based on parsed bytes
+    pub fn from(frame_rx: &[u8]) -> Self {
+        let mut message = Self::new();
+        message.parse(frame_rx);
+        message
     }
 
     /// Get 'id' header field
@@ -61,7 +69,7 @@ impl<'a> EchoRequest {
     }
 
     /// Set 'id' header field
-    pub fn set_id(mut self, _id: u16) -> EchoRequest {
+    pub fn set_id(mut self, _id: u16) -> Self {
         self._id = _id;
         self
     }
@@ -72,7 +80,7 @@ impl<'a> EchoRequest {
     }
 
     /// Set 'seq' header field
-    pub fn set_seq(mut self, _seq: u16) -> EchoRequest {
+    pub fn set_seq(mut self, _seq: u16) -> Self {
         self._seq = _seq;
         self
     }
@@ -83,7 +91,7 @@ impl<'a> EchoRequest {
     }
 
     /// Set message data
-    pub fn set_data(mut self, data: &[u8]) -> EchoRequest {
+    pub fn set_data(mut self, data: &[u8]) -> Self {
         self.data = data.to_vec();
         self
     }
@@ -92,22 +100,23 @@ impl<'a> EchoRequest {
     pub fn phdr(&mut self, phdr: Vec<u8>) {
         self.phdr = phdr;
     }
+}
 
+impl protocol::Protocol for EchoRequest {
     /// Get message length
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         HEADER_LEN + self.data.len()
     }
 
     /// Parse message
-    pub fn parse(mut self, frame_rx: &[u8]) -> Self {
+    fn parse(&mut self, frame_rx: &[u8]) {
         self._id = NetworkEndian::read_u16(&frame_rx[4..6]);
         self._seq = NetworkEndian::read_u16(&frame_rx[6..8]);
         self.data = (&frame_rx[HEADER_LEN..]).to_vec();
-        self
     }
 
     /// Assemble message
-    pub fn assemble(&self, frame_tx: &mut Vec<u8>) {
+    fn assemble(&self, frame_tx: &mut Vec<u8>) {
         let header_ptr = frame_tx.len();
         frame_tx.extend_from_slice(&[
             ECHO_REQUEST__TYPE,
@@ -152,15 +161,22 @@ pub struct EchoReply {
     phdr: Vec<u8>,
 }
 
-impl<'a> EchoReply {
+impl EchoReply {
     /// Create empty message struct
-    pub fn new() -> EchoReply {
-        EchoReply {
+    pub fn new() -> Self {
+        Self {
             _id: 0,
             _seq: 0,
             data: Vec::default(),
             phdr: Vec::default(),
         }
+    }
+
+    /// Create message based on parsed bytes
+    pub fn from(frame_rx: &[u8]) -> Self {
+        let mut message = Self::new();
+        message.parse(frame_rx);
+        message
     }
 
     /// Get 'id' header field
@@ -169,7 +185,7 @@ impl<'a> EchoReply {
     }
 
     /// Set 'id' header field
-    pub fn set_id(mut self, _id: u16) -> EchoReply {
+    pub fn set_id(mut self, _id: u16) -> Self {
         self._id = _id;
         self
     }
@@ -180,7 +196,7 @@ impl<'a> EchoReply {
     }
 
     /// Set 'seq' header field
-    pub fn set_seq(mut self, _seq: u16) -> EchoReply {
+    pub fn set_seq(mut self, _seq: u16) -> Self {
         self._seq = _seq;
         self
     }
@@ -191,7 +207,7 @@ impl<'a> EchoReply {
     }
 
     /// Set message data
-    pub fn set_data(mut self, data: &[u8]) -> EchoReply {
+    pub fn set_data(mut self, data: &[u8]) -> Self {
         self.data = data.to_vec();
         self
     }
@@ -200,22 +216,23 @@ impl<'a> EchoReply {
     pub fn phdr(&mut self, phdr: Vec<u8>) {
         self.phdr = phdr;
     }
+}
 
+impl protocol::Protocol for EchoReply {
     /// Get message length
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         HEADER_LEN + self.data.len()
     }
 
     /// Parse message
-    pub fn parse(mut self, frame_rx: &[u8]) -> Self {
+    fn parse(&mut self, frame_rx: &[u8]) {
         self._id = NetworkEndian::read_u16(&frame_rx[4..6]);
         self._seq = NetworkEndian::read_u16(&frame_rx[6..8]);
         self.data = (&frame_rx[HEADER_LEN..]).to_vec();
-        self
     }
 
     /// Assemble message
-    pub fn assemble(&self, frame_tx: &mut Vec<u8>) {
+    fn assemble(&self, frame_tx: &mut Vec<u8>) {
         let header_ptr = frame_tx.len();
         frame_tx.extend_from_slice(&[
             ECHO_REPLY__TYPE,

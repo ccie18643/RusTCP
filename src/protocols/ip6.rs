@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /*
 ############################################################################
 #                                                                          #
@@ -25,7 +23,10 @@
 ############################################################################
 */
 
+#![allow(dead_code)]
+
 use crate::lib::ip6_address::Ip6Address;
+use crate::protocols::protocol::{self, Protocol};
 use byteorder::{ByteOrder, NetworkEndian};
 use std::fmt;
 
@@ -49,8 +50,8 @@ pub struct Ip6 {
 
 impl Ip6 {
     /// Create empty header
-    pub fn new() -> Ip6 {
-        Ip6 {
+    pub fn new() -> Self {
+        Self {
             _ver: 6,
             _dscp: 0,
             _ecn: 0,
@@ -63,13 +64,20 @@ impl Ip6 {
         }
     }
 
+    /// Create header based on parsed bytes
+    pub fn from(frame_rx: &[u8]) -> Self {
+        let mut header = Self::new();
+        header.parse(frame_rx);
+        header
+    }
+
     /// Get the 'flow' header field
     pub fn get_flow(&self) -> u32 {
         self._flow
     }
 
     /// Set the 'flow' header field
-    pub fn set_flow(mut self, _flow: u32) -> Ip6 {
+    pub fn set_flow(mut self, _flow: u32) -> Self {
         self._flow = _flow;
         self
     }
@@ -80,7 +88,7 @@ impl Ip6 {
     }
 
     /// Set the 'dlen' header field
-    pub fn set_dlen(mut self, _dlen: u16) -> Ip6 {
+    pub fn set_dlen(mut self, _dlen: u16) -> Self {
         self._dlen = _dlen;
         self
     }
@@ -91,7 +99,7 @@ impl Ip6 {
     }
 
     /// Set the 'next' header field
-    pub fn set_next(mut self, _next: u8) -> Ip6 {
+    pub fn set_next(mut self, _next: u8) -> Self {
         self._next = _next;
         self
     }
@@ -102,7 +110,7 @@ impl Ip6 {
     }
 
     /// Set the 'hop' header field
-    pub fn set_hop(mut self, _hop: u8) -> Ip6 {
+    pub fn set_hop(mut self, _hop: u8) -> Self {
         self._hop = _hop;
         self
     }
@@ -113,7 +121,7 @@ impl Ip6 {
     }
 
     /// Set the source IPv6 address
-    pub fn set_src(mut self, _src: Ip6Address) -> Ip6 {
+    pub fn set_src(mut self, _src: Ip6Address) -> Self {
         self._src = _src;
         self
     }
@@ -124,7 +132,7 @@ impl Ip6 {
     }
 
     /// Set the destination IPv6 address
-    pub fn set_dst(mut self, _dst: Ip6Address) -> Ip6 {
+    pub fn set_dst(mut self, _dst: Ip6Address) -> Self {
         self._dst = _dst;
         self
     }
@@ -146,14 +154,16 @@ impl Ip6 {
         ]);
         phdr
     }
+}
 
+impl protocol::Protocol for Ip6 {
     /// Get header length
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         HEADER_LEN
     }
 
     /// Parse header
-    pub fn parse(mut self, frame_rx: &[u8]) -> Self {
+    fn parse(&mut self, frame_rx: &[u8]) {
         self._flow = (((frame_rx[1] & 0b00001111) as u32) << 16)
             | ((frame_rx[2] as u32) << 8)
             | (frame_rx[3] as u32);
@@ -162,11 +172,10 @@ impl Ip6 {
         self._hop = frame_rx[7];
         self._src = frame_rx[8..24].into();
         self._dst = frame_rx[24..40].into();
-        self
     }
 
     /// Assemble header
-    pub fn assemble(&self, frame_tx: &mut Vec<u8>) {
+    fn assemble(&self, frame_tx: &mut Vec<u8>) {
         frame_tx.extend_from_slice(&[
             self._ver << 4 | self._dscp >> 4,
             self._dscp & 0x03 << 6 | self._ecn << 4 | (self._flow & 0xF0000 >> 16) as u8,
@@ -181,6 +190,7 @@ impl Ip6 {
         frame_tx.extend_from_slice(&self._dst.to_bytes());
     }
 }
+
 impl fmt::Display for Ip6 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
