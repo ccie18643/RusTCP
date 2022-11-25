@@ -1,4 +1,4 @@
-# RusTCP (version 0.1)
+# RusTCP
 
 [RusTCP](https://github.com/ccie18643/RusTCP) RusTCP is an attempt to rewrite some of the [PyTCP](https://github.com/ccie18643/PyTCP) stack functionality using Rust language. Currently, the main goal of this project is to create a stable IPv6 platform that could be used to facilitate the process of testing the SRv6 technology.
 
