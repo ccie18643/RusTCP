@@ -3,6 +3,14 @@ name = "rustcp"
 version = "0.1.0"
 authors = ["Sebastian Majewski <ccie18643@gmail.com>"]
 edition = "2021"
+description = "A pure-Rust TCP/IP stack on TUN/TAP, focused on IPv6 + SRv6 testing. Companion to the PyTCP project."
+license = "GPL-3.0-or-later"
+repository = "https://github.com/ccie18643/RusTCP"
+homepage = "https://github.com/ccie18643/RusTCP"
+readme = "README.md"
+keywords = ["tcp", "ipv6", "networking", "stack", "tun"]
+categories = ["network-programming"]
+exclude = ["doc/"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
